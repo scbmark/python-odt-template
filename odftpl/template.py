@@ -150,12 +150,16 @@ class OdfTemplate:
         # INSIDE a Jinja2 block (i.e. OO/LO split the tag across spans)
         # ----------------------------------------------------------------
         def _striptags(m: re.Match) -> str:
-            return re.sub(
+            cleaned = re.sub(
                 r"</text:span>.*?<text:span[^>]*>",
                 "",
                 m.group(0),
                 flags=re.DOTALL,
             )
+            # Remove any remaining inline XML tags (e.g. <text:s/>, <text:bookmark.../>)
+            # that LO/OO may have inserted inside a Jinja2 block
+            cleaned = re.sub(r"<[^>]+>", "", cleaned)
+            return cleaned
 
         src_xml = re.sub(
             r"{%(?:(?!%}).)*|{#(?:(?!#}).)*|{{(?:(?!}}).)*",
@@ -213,13 +217,30 @@ class OdfTemplate:
         # Step 5 – remove orphaned </text:span> closing tags that were left
         # behind when patch_xml Step 1 removed the matching opening <text:span>
         # (happens when LO stores {% as bare "{" + <span>% ...)
+        #
+        # Strategy: track <text:span> open/close depth.  A </text:span> that
+        # arrives when depth == 0 has no matching opener and is discarded.
         # ----------------------------------------------------------------
-        # Case A: Jinja2 block tag immediately followed by orphaned close spans
-        #   {% ... %}</text:span>  →  {% ... %}
-        src_xml = re.sub(r"(%\})(</text:span>)+", r"\1", src_xml)
-        # Case B: Jinja2 expression tag immediately followed by orphaned close spans
-        #   {{ ... }}</text:span>  →  {{ ... }}
-        src_xml = re.sub(r"(\}\})(</text:span>)+", r"\1", src_xml)
+        parts = re.split(
+            r"(<text:span(?:\s[^>]*)?>|<text:span\s*/>|</text:span>)",
+            src_xml,
+        )
+        depth = 0
+        cleaned: list[str] = []
+        for part in parts:
+            if re.fullmatch(r"<text:span(?:\s[^>]*)?>", part):
+                depth += 1
+                cleaned.append(part)
+            elif re.fullmatch(r"<text:span\s*/>", part):
+                cleaned.append(part)        # self-closing, depth unchanged
+            elif part == "</text:span>":
+                if depth > 0:
+                    depth -= 1
+                    cleaned.append(part)
+                # else: orphaned closing tag — discard
+            else:
+                cleaned.append(part)
+        src_xml = "".join(cleaned)
 
         # ----------------------------------------------------------------
         # Step 6 – unescape HTML entities/smart-quotes inside {{ … }} / {% … %}
