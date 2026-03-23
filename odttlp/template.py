@@ -51,12 +51,12 @@ def _mime_for_ext(ext: str) -> str:
 # Main class
 # ---------------------------------------------------------------------------
 
-class OdfTemplate:
+class OdtTemplate:
     """Treat an ODF file (.odt, .ods, .odp …) as a Jinja2 template.
 
     Usage::
 
-        tpl = OdfTemplate("my_template.odt")
+        tpl = OdtTemplate("my_template.odt")
         tpl.render({"name": "World", "rows": [...]})
         tpl.save("output.odt")
     """
@@ -466,7 +466,7 @@ class OdfTemplate:
         """Register a text automatic style and return its generated name."""
         key: frozenset = frozenset((k, v) for k, v in props.items() if v)
         if key not in self._auto_styles:
-            self._auto_styles[key] = f"odftpl_T{len(self._auto_styles) + 1}"
+            self._auto_styles[key] = f"odttlp_T{len(self._auto_styles) + 1}"
         return self._auto_styles[key]
 
     def _build_auto_styles_xml(self) -> str:
@@ -551,7 +551,7 @@ class OdfTemplate:
 
         ext = ext.lower() or "png"
         digest = hashlib.md5(image_data).hexdigest()[:12]
-        name = f"odftpl_{digest}.{ext}"
+        name = f"odttlp_{digest}.{ext}"
         self._extra_images[name] = image_data
         return name
 

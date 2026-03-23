@@ -4,15 +4,15 @@ InlineImage – embed a picture inline inside an ODF paragraph.
 
 In ODF, images are stored in the ``Pictures/`` directory inside the ZIP
 archive and referenced from ``content.xml`` via a ``<draw:frame>`` /
-``<draw:image>`` element.  ``OdfTemplate._add_image`` handles storing the
+``<draw:image>`` element.  ``OdtTemplate._add_image`` handles storing the
 bytes; ``InlineImage.__str__`` returns the XML fragment that Jinja2 inserts
 into the rendered document.
 
 Usage::
 
-    from odftpl import OdfTemplate, InlineImage
+    from odttlp import OdtTemplate, InlineImage
 
-    tpl = OdfTemplate("template.odt")
+    tpl = OdtTemplate("template.odt")
     context = {
         "logo": InlineImage(tpl, "logo.png", width="4cm", height="2cm"),
     }
@@ -40,7 +40,7 @@ class InlineImage:
     Parameters
     ----------
     tpl:
-        The parent ``OdfTemplate`` instance.
+        The parent ``OdtTemplate`` instance.
     image_descriptor:
         Path to the image file *or* a file-like object (``io.BytesIO``, …).
     width:

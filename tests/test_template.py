@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Basic functional tests for OdfTemplate.
+Basic functional tests for OdtTemplate.
 
 Run with::
 
@@ -12,7 +12,7 @@ import zipfile
 
 import pytest
 
-from odftpl import OdfTemplate, Listing, RichText, RichTextParagraph, InlineImage
+from odttlp import OdtTemplate, Listing, RichText, RichTextParagraph, InlineImage
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
 
@@ -23,7 +23,7 @@ def _content_xml(odt_bytes: bytes) -> str:
 
 
 def _render(template_name: str, context: dict) -> str:
-    tpl = OdfTemplate(os.path.join(TEMPLATES, template_name))
+    tpl = OdtTemplate(os.path.join(TEMPLATES, template_name))
     tpl.render(context)
     buf = io.BytesIO()
     tpl.save(buf)
@@ -41,7 +41,7 @@ def test_simple_variable():
 
 def test_variable_escaped():
     from jinja2 import Environment
-    tpl = OdfTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     tpl.render({"name": "<b>danger</b>"}, autoescape=True)
     buf = io.BytesIO()
     tpl.save(buf)
@@ -82,7 +82,7 @@ def test_listing_tab():
 # ---------------------------------------------------------------------------
 
 def test_richtext_bold():
-    tpl = OdfTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     rt = RichText(tpl, "Bold text", bold=True)
     tpl.render({"name": rt})
     buf = io.BytesIO()
@@ -94,7 +94,7 @@ def test_richtext_bold():
 
 
 def test_richtext_color():
-    tpl = OdfTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     rt = RichText(tpl, "Coloured", color="#FF0000")
     tpl.render({"name": rt})
     buf = io.BytesIO()
@@ -104,7 +104,7 @@ def test_richtext_color():
 
 
 def test_richtext_named_style():
-    tpl = OdfTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     rt = RichText(tpl, "Styled", style="Emphasis")
     tpl.render({"name": rt})
     buf = io.BytesIO()
@@ -132,7 +132,7 @@ def test_conditional_false():
 # ---------------------------------------------------------------------------
 
 def test_undeclared_variables():
-    tpl = OdfTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     variables = tpl.get_undeclared_variables()
     assert "name" in variables
 
@@ -143,7 +143,7 @@ def test_undeclared_variables():
 
 def test_save_to_file(tmp_path):
     out = tmp_path / "output.odt"
-    tpl = OdfTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     tpl.render({"name": "FileTest"})
     tpl.save(str(out))
     xml = _content_xml(out.read_bytes())
@@ -151,11 +151,11 @@ def test_save_to_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Multi-render (same OdfTemplate instance rendered twice)
+# Multi-render (same OdtTemplate instance rendered twice)
 # ---------------------------------------------------------------------------
 
 def test_multi_render():
-    tpl = OdfTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
 
     tpl.render({"name": "First"})
     buf1 = io.BytesIO()

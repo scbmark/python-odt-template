@@ -7,7 +7,7 @@ Keeps the current paragraph styling from the template while allowing
 inline elements (``<text:line-break/>``, ``<text:tab/>``, new paragraph,
 soft-page-break).
 
-The actual XML substitution is performed by ``OdfTemplate.resolve_listing``
+The actual XML substitution is performed by ``OdtTemplate.resolve_listing``
 *after* Jinja2 rendering so that the special characters survive the render
 step unchanged.
 
@@ -50,7 +50,7 @@ class Listing:
         if isinstance(text, bytes):
             text = text.decode("utf-8", errors="ignore")
         # HTML-escape the text; special control chars are preserved so that
-        # OdfTemplate.resolve_listing can act on them after Jinja2 rendering.
+        # OdtTemplate.resolve_listing can act on them after Jinja2 rendering.
         self.xml = escape(text)
 
     def __unicode__(self) -> str:

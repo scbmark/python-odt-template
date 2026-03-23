@@ -4,7 +4,7 @@ RichText / RichTextParagraph for ODF templates.
 
 Unlike the DOCX version (which embeds inline ``<w:rPr>`` properties), ODF
 stores text-run formatting as *named styles*.  ``RichText`` therefore keeps
-a reference to the parent ``OdfTemplate`` so it can register an automatic
+a reference to the parent ``OdtTemplate`` so it can register an automatic
 style on-the-fly and reference it by name from the rendered XML.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ except ImportError:
     from cgi import escape  # type: ignore[no-redef]
 
 if TYPE_CHECKING:
-    from .template import OdfTemplate
+    from .template import OdtTemplate
 
 
 class RichText:
@@ -34,14 +34,14 @@ class RichText:
 
         {{ greeting }}
 
-    The ``tpl`` argument must be the ``OdfTemplate`` instance so that
+    The ``tpl`` argument must be the ``OdtTemplate`` instance so that
     automatic character styles can be registered and later injected into
     ``content.xml``.
     """
 
     def __init__(
         self,
-        tpl: "OdfTemplate",
+        tpl: "OdtTemplate",
         text: Optional[Union[str, "RichText"]] = None,
         **text_props,
     ) -> None:
@@ -176,14 +176,14 @@ class RichTextParagraph:
         rp.add(rt, parastyle="Heading_20_2")
         context = {"header": rp}
 
-    In your template use ``{{p header }}`` (the ``p`` prefix tells odftpl to
+    In your template use ``{{p header }}`` (the ``p`` prefix tells odttlp to
     strip the surrounding ``<text:p>`` so that the variable replaces the whole
     paragraph rather than being inserted inside one).
     """
 
     def __init__(
         self,
-        tpl: "OdfTemplate",
+        tpl: "OdtTemplate",
         text: Optional[Union[str, RichText]] = None,
         **text_props,
     ) -> None:
