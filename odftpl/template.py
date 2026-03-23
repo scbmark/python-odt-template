@@ -299,7 +299,84 @@ class OdfTemplate:
             .replace("%_}", "%}")
         )
         dst_xml = self.resolve_listing(dst_xml)
+        dst_xml = self._merge_consecutive_lists(dst_xml)
         return dst_xml
+
+    # ------------------------------------------------------------------
+    # List merging – fix auto-numbering after for-loop expansion
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _merge_consecutive_lists(xml: str) -> str:
+        """Merge consecutive ``<text:list>`` elements that share the same style.
+
+        When a Jinja2 ``{% for %}`` loop expands inside a list item, each
+        iteration produces its own ``<text:list>`` wrapper, so every item
+        restarts numbering at 1.  Merging adjacent same-style lists into one
+        restores correct auto-numbering.
+
+        Handles arbitrary nesting: only *outer-level* (depth-0) lists are
+        candidates for merging; inner lists are left untouched.
+        """
+        _LIST_OPEN = re.compile(r"<text:list\b(?:\s[^>]*)?>", re.DOTALL)
+        _STYLE = re.compile(r'\btext:style-name="([^"]*)"')
+
+        # Tokenise on list open/close tags only.
+        tokens = re.split(r"(<text:list\b(?:\s[^>]*)?>|</text:list>)", xml)
+
+        result: list[str] = []
+        depth = 0
+        style_stack: list[str] = []
+        # Style name of the most-recently-closed outer list (buffered close tag).
+        pending_close_style: Optional[str] = None
+
+        for token in tokens:
+            if _LIST_OPEN.fullmatch(token):
+                sm = _STYLE.search(token)
+                style = sm.group(1) if sm else ""
+
+                if pending_close_style is not None and depth == 0 and style == pending_close_style:
+                    # Adjacent same-style list at the outer level → merge:
+                    # drop both the buffered </text:list> and this opening tag.
+                    pending_close_style = None
+                else:
+                    if pending_close_style is not None:
+                        # Different style or different depth — flush the buffered close.
+                        result.append("</text:list>")
+                        pending_close_style = None
+                    result.append(token)
+
+                style_stack.append(style)
+                depth += 1
+
+            elif token == "</text:list>":
+                depth -= 1
+                closed_style = style_stack.pop() if style_stack else ""
+
+                if depth == 0:
+                    # Buffer so we can peek at the next sibling list.
+                    if pending_close_style is not None:
+                        result.append("</text:list>")
+                    pending_close_style = closed_style
+                else:
+                    # Inner close tag — emit immediately.
+                    if pending_close_style is not None:
+                        result.append("</text:list>")
+                        pending_close_style = None
+                    result.append(token)
+
+            else:
+                # Non-list-tag content.
+                if pending_close_style is not None and token.strip():
+                    # Real content between lists — flush the buffered close.
+                    result.append("</text:list>")
+                    pending_close_style = None
+                result.append(token)
+
+        if pending_close_style is not None:
+            result.append("</text:list>")
+
+        return "".join(result)
 
     # ------------------------------------------------------------------
     # Listing resolution – convert \n / \t / \a / \f to ODF XML
