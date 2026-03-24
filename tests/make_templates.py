@@ -8,6 +8,7 @@ Run once::
 The resulting .odt files in tests/templates/ can then be used by the test
 suite without needing a LibreOffice installation.
 """
+
 import io
 import zipfile
 import os

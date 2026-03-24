@@ -6,13 +6,12 @@ Run with::
 
     pytest tests/
 """
+
 import io
 import os
 import zipfile
 
-import pytest
-
-from odttpl import OdtTemplate, Listing, RichText, RichTextParagraph, InlineImage
+from odttpl import OdtTemplate, Listing, RichText
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
 
@@ -34,13 +33,13 @@ def _render(template_name: str, context: dict) -> str:
 # Simple variable substitution
 # ---------------------------------------------------------------------------
 
+
 def test_simple_variable():
     xml = _render("simple_var.odt", {"name": "World"})
     assert "Hello World!" in xml
 
 
 def test_variable_escaped():
-    from jinja2 import Environment
     tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     tpl.render({"name": "<b>danger</b>"}, autoescape=True)
     buf = io.BytesIO()
@@ -53,6 +52,7 @@ def test_variable_escaped():
 # ---------------------------------------------------------------------------
 # Table row loop
 # ---------------------------------------------------------------------------
+
 
 def test_loop_table():
     items = [{"name": "Alpha", "value": "1"}, {"name": "Beta", "value": "2"}]
@@ -67,6 +67,7 @@ def test_loop_table():
 # Listing (newlines / tabs)
 # ---------------------------------------------------------------------------
 
+
 def test_listing_newline():
     xml = _render("listing.odt", {"body": Listing("Line1\nLine2")})
     assert "<text:line-break/>" in xml
@@ -80,6 +81,7 @@ def test_listing_tab():
 # ---------------------------------------------------------------------------
 # RichText
 # ---------------------------------------------------------------------------
+
 
 def test_richtext_bold():
     tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
@@ -117,6 +119,7 @@ def test_richtext_named_style():
 # Conditional (paragraph-level)
 # ---------------------------------------------------------------------------
 
+
 def test_conditional_true():
     xml = _render("conditional.odt", {"show": True})
     assert "Visible" in xml
@@ -131,6 +134,7 @@ def test_conditional_false():
 # get_undeclared_variables
 # ---------------------------------------------------------------------------
 
+
 def test_undeclared_variables():
     tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     variables = tpl.get_undeclared_variables()
@@ -140,6 +144,7 @@ def test_undeclared_variables():
 # ---------------------------------------------------------------------------
 # save to file path (not just BytesIO)
 # ---------------------------------------------------------------------------
+
 
 def test_save_to_file(tmp_path):
     out = tmp_path / "output.odt"
@@ -153,6 +158,7 @@ def test_save_to_file(tmp_path):
 # ---------------------------------------------------------------------------
 # Multi-render (same OdtTemplate instance rendered twice)
 # ---------------------------------------------------------------------------
+
 
 def test_multi_render():
     tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))

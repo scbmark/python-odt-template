@@ -7,6 +7,7 @@ content.xml and page-level styles/headers/footers live in styles.xml.
 Both files are patched so that Jinja2 can render them, then written back
 into a new ZIP archive.
 """
+
 from __future__ import annotations
 
 import binascii
@@ -18,14 +19,14 @@ import zipfile
 from typing import Any, Dict, IO, Optional, Set, Union
 from pathlib import Path
 
-from lxml import etree
+from lxml import etree  # ty:ignore[unresolved-import]
 from jinja2 import Environment, Template, meta
 from jinja2.exceptions import TemplateError
 
 try:
     from html import escape
 except ImportError:
-    from cgi import escape  # type: ignore[no-redef]
+    from cgi import escape  # type: ignore[no-redef]  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # MIME type guessing for images
@@ -50,6 +51,7 @@ def _mime_for_ext(ext: str) -> str:
 # ---------------------------------------------------------------------------
 # Main class
 # ---------------------------------------------------------------------------
+
 
 class OdtTemplate:
     """Treat an ODF file (.odt, .ods, .odp …) as a Jinja2 template.
@@ -81,17 +83,17 @@ class OdtTemplate:
             if hasattr(self.template_file, "read"):
                 self._template_data = self.template_file.read()  # type: ignore[union-attr]
             else:
-                with open(self.template_file, "rb") as fh:  # type: ignore[arg-type]
+                with open(self.template_file, "rb") as fh:
                     self._template_data = fh.read()
 
     def _read_zip_entry(self, filename: str) -> str:
         self._load_template()
-        with zipfile.ZipFile(io.BytesIO(self._template_data)) as zf:  # type: ignore[arg-type]
+        with zipfile.ZipFile(io.BytesIO(self._template_data)) as zf:  # ty:ignore[invalid-argument-type]
             return zf.read(filename).decode("utf-8")
 
     def _has_zip_entry(self, filename: str) -> bool:
         self._load_template()
-        with zipfile.ZipFile(io.BytesIO(self._template_data)) as zf:  # type: ignore[arg-type]
+        with zipfile.ZipFile(io.BytesIO(self._template_data)) as zf:  # ty:ignore[invalid-argument-type]
             return filename in zf.namelist()
 
     # ------------------------------------------------------------------
@@ -176,15 +178,14 @@ class OdtTemplate:
         _TAG_MAP = [
             ("tr", "table:table-row"),
             ("tc", "table:table-cell"),
-            ("p",  "text:p"),
-            ("s",  "text:span"),
+            ("p", "text:p"),
+            ("s", "text:span"),
         ]
         for y, tag in _TAG_MAP:
             # {%y ... %} and {{y ... }} (expression)
             pat = (
                 r"<%(tag)s[ >](?:(?!<%(tag)s[ >]).)*"
-                r"({%%|{{)%(y)s ([^}%%]*(?:%%}|}})).*?</%(tag)s>"
-                % {"tag": tag, "y": y}
+                r"({%%|{{)%(y)s ([^}%%]*(?:%%}|}})).*?</%(tag)s>" % {"tag": tag, "y": y}
             )
             src_xml = re.sub(pat, r"\1 \2", src_xml, flags=re.DOTALL)
 
@@ -192,8 +193,7 @@ class OdtTemplate:
         for y, tag in _TAG_MAP[:3]:
             pat = (
                 r"<%(tag)s[ >](?:(?!<%(tag)s[ >]).)*"
-                r"({#)%(y)s ([^}#]*(?:#})).*?</%(tag)s>"
-                % {"tag": tag, "y": y}
+                r"({#)%(y)s ([^}#]*(?:#})).*?</%(tag)s>" % {"tag": tag, "y": y}
             )
             src_xml = re.sub(pat, r"\1 \2", src_xml, flags=re.DOTALL)
 
@@ -232,7 +232,7 @@ class OdtTemplate:
                 depth += 1
                 cleaned.append(part)
             elif re.fullmatch(r"<text:span\s*/>", part):
-                cleaned.append(part)        # self-closing, depth unchanged
+                cleaned.append(part)  # self-closing, depth unchanged
             elif part == "</text:span>":
                 if depth > 0:
                     depth -= 1
@@ -282,7 +282,7 @@ class OdtTemplate:
             dst_xml = template.render(context)
         except TemplateError as exc:
             if hasattr(exc, "lineno") and exc.lineno is not None:
-                line_number = max(exc.lineno - 4, 0)
+                line_number = max(exc.lineno - 4, 0)  # ty:ignore[unsupported-operator]
                 exc.odf_context = list(  # type: ignore[attr-defined]
                     map(
                         lambda x: re.sub(r"<[^>]+>", "", x),
@@ -335,7 +335,11 @@ class OdtTemplate:
                 sm = _STYLE.search(token)
                 style = sm.group(1) if sm else ""
 
-                if pending_close_style is not None and depth == 0 and style == pending_close_style:
+                if (
+                    pending_close_style is not None
+                    and depth == 0
+                    and style == pending_close_style
+                ):
                     # Adjacent same-style list at the outer level → merge:
                     # drop both the buffered </text:list> and this opening tag.
                     pending_close_style = None
@@ -476,9 +480,13 @@ class OdtTemplate:
             props = dict(key)
             tp: list[str] = []
             if props.get("bold"):
-                tp.append('fo:font-weight="bold" fo:font-weight-asian="bold" fo:font-weight-complex="bold"')
+                tp.append(
+                    'fo:font-weight="bold" fo:font-weight-asian="bold" fo:font-weight-complex="bold"'
+                )
             if props.get("italic"):
-                tp.append('fo:font-style="italic" fo:font-style-asian="italic" fo:font-style-complex="italic"')
+                tp.append(
+                    'fo:font-style="italic" fo:font-style-asian="italic" fo:font-style-complex="italic"'
+                )
             if props.get("underline"):
                 u = props["underline"]
                 u_style = u if isinstance(u, str) and u != "single" else "solid"
@@ -496,10 +504,14 @@ class OdtTemplate:
                 tp.append(f'fo:color="{color}"')
             if props.get("size"):
                 s = props["size"]
-                tp.append(f'fo:font-size="{s}pt" style:font-size-asian="{s}pt" style:font-size-complex="{s}pt"')
+                tp.append(
+                    f'fo:font-size="{s}pt" style:font-size-asian="{s}pt" style:font-size-complex="{s}pt"'
+                )
             if props.get("font"):
                 f = props["font"]
-                tp.append(f'fo:font-family="{f}" style:font-family-asian="{f}" style:font-family-complex="{f}"')
+                tp.append(
+                    f'fo:font-family="{f}" style:font-family-asian="{f}" style:font-family-complex="{f}"'
+                )
             if props.get("superscript"):
                 tp.append('style:text-position="super 58%"')
             if props.get("subscript"):
@@ -545,7 +557,7 @@ class OdtTemplate:
             ext = getattr(image_descriptor, "name", "image.png")
             ext = os.path.splitext(str(ext))[1].lstrip(".")
         else:
-            with open(image_descriptor, "rb") as fh:  # type: ignore[arg-type]
+            with open(image_descriptor, "rb") as fh:
                 image_data = fh.read()
             ext = os.path.splitext(str(image_descriptor))[1].lstrip(".")
 
@@ -566,7 +578,7 @@ class OdtTemplate:
             ext = os.path.splitext(name)[1].lstrip(".")
             mime = _mime_for_ext(ext)
             entries.append(
-                f'<manifest:file-entry '
+                f"<manifest:file-entry "
                 f'manifest:full-path="Pictures/{name}" '
                 f'manifest:media-type="{mime}"/>'
             )
@@ -630,7 +642,7 @@ class OdtTemplate:
             out: IO[bytes] = output_file  # type: ignore[assignment]
             close_out = False
         else:
-            out = open(output_file, "wb")  # type: ignore[arg-type]
+            out = open(output_file, "wb")
             close_out = True
 
         try:
@@ -671,6 +683,6 @@ class OdtTemplate:
         if hasattr(file_obj, "read"):
             buf: bytes = file_obj.read()  # type: ignore[union-attr]
         else:
-            with open(file_obj, "rb") as fh:  # type: ignore[arg-type]
+            with open(file_obj, "rb") as fh:
                 buf = fh.read()
         return binascii.crc32(buf) & 0xFFFFFFFF

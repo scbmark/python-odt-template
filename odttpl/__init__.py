@@ -9,8 +9,8 @@ LibreOffice / OpenOffice.
 
 __version__ = "0.1.0"
 
-# flake8: noqa
-from .template import OdtTemplate
-from .richtext import RichText, RichTextParagraph, R, RP
-from .listing import Listing
-from .inline_image import InlineImage
+
+from .template import OdtTemplate  # noqa: F401
+from .richtext import RichText, RichTextParagraph, R, RP  # noqa: F401
+from .listing import Listing  # noqa: F401
+from .inline_image import InlineImage  # noqa: F401

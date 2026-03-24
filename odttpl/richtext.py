@@ -7,6 +7,7 @@ stores text-run formatting as *named styles*.  ``RichText`` therefore keeps
 a reference to the parent ``OdtTemplate`` so it can register an automatic
 style on-the-fly and reference it by name from the rendered XML.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Union
@@ -106,7 +107,18 @@ class RichText:
         escaped = escape(text)
 
         has_props = any(
-            [style, bold, italic, underline, strike, color, size, font, superscript, subscript]
+            [
+                style,
+                bold,
+                italic,
+                underline,
+                strike,
+                color,
+                size,
+                font,
+                superscript,
+                subscript,
+            ]
         )
         if not has_props:
             self._fragments.append((escaped, None, None))
@@ -145,8 +157,7 @@ class RichText:
             elif props:
                 style_name = self.tpl._register_text_style(**props)
                 result += (
-                    f'<text:span text:style-name="{style_name}">'
-                    f"{escaped}</text:span>"
+                    f'<text:span text:style-name="{style_name}">{escaped}</text:span>'
                 )
             else:
                 result += escaped

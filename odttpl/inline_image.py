@@ -27,6 +27,7 @@ In the .odt template put ``{{ logo }}`` inside a paragraph.
     image is inserted without explicit size (the viewer will use the image's
     natural size).
 """
+
 from __future__ import annotations
 
 import os
@@ -88,7 +89,7 @@ class InlineImage:
             f'text:anchor-type="{self.anchor}"'
             f"{size_attrs} "
             f'draw:z-index="0">'
-            f'<draw:image '
+            f"<draw:image "
             f'xlink:href="Pictures/{image_name}" '
             f'xlink:type="simple" '
             f'xlink:show="embed" '

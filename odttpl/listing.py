@@ -21,6 +21,7 @@ In the .odt template::
 
     {{ body }}
 """
+
 try:
     from html import escape
 except ImportError:
