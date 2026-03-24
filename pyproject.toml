@@ -1,5 +1,5 @@
 [project]
-name = "odttlp"
+name = "odttpl"
 version = "0.1.0"
 description = "Python ODT template engine (jinja2-based, mirrors python-docx-template)"
 authors = [{name = "Your Name", email = "you@example.com"}]

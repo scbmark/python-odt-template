@@ -12,7 +12,7 @@ import zipfile
 
 import pytest
 
-from odttlp import OdtTemplate, Listing, RichText, RichTextParagraph, InlineImage
+from odttpl import OdtTemplate, Listing, RichText, RichTextParagraph, InlineImage
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
 

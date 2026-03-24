@@ -10,7 +10,7 @@ into the rendered document.
 
 Usage::
 
-    from odttlp import OdtTemplate, InlineImage
+    from odttpl import OdtTemplate, InlineImage
 
     tpl = OdtTemplate("template.odt")
     context = {

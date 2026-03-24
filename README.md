@@ -1,7 +1,7 @@
 # python-odt-template
 
-[![PyPI version](https://img.shields.io/pypi/v/odttlp.svg)](https://pypi.org/project/odttlp/)
-[![Python versions](https://img.shields.io/pypi/pyversions/odttlp.svg)](https://pypi.org/project/odttlp/)
+[![PyPI version](https://img.shields.io/pypi/v/odttpl.svg)](https://pypi.org/project/odttpl/)
+[![Python versions](https://img.shields.io/pypi/pyversions/odttpl.svg)](https://pypi.org/project/odttpl/)
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](LICENSE.txt)
 [![Tests](https://github.com/yourname/python-odt-template/actions/workflows/test.yml/badge.svg)](https://github.com/yourname/python-odt-template/actions)
 
@@ -24,13 +24,13 @@
 ## 安裝
 
 ```bash
-pip install odttlp
+pip install odttpl
 ```
 
 或使用 [uv](https://github.com/astral-sh/uv)：
 
 ```bash
-uv add odttlp
+uv add odttpl
 ```
 
 **需求**：Python 3.8+，依賴 `jinja2` 與 `lxml`（自動安裝）。
@@ -52,7 +52,7 @@ uv add odttlp
 **2. 渲染並輸出**
 
 ```python
-from odttlp import OdtTemplate
+from odttpl import OdtTemplate
 
 tpl = OdtTemplate("template.odt")
 tpl.render({"name": "王小明", "total": 5})
@@ -118,7 +118,7 @@ ODF XML 有嚴格的巢狀結構。若要用 Jinja2 控制整個**表格列**或
 使用 `RichText`（縮寫 `R`）可在同一變數中混合多種格式：
 
 ```python
-from odttlp import OdtTemplate, RichText
+from odttpl import OdtTemplate, RichText
 
 tpl = OdtTemplate("template.odt")
 
@@ -155,7 +155,7 @@ tpl.save("output.odt")
 若需從 Python 輸出含段落樣式的整個段落，使用 `RichTextParagraph`（縮寫 `RP`），並在範本中以 `{{p content }}` 取代整個段落：
 
 ```python
-from odttlp import OdtTemplate, RichText, RichTextParagraph
+from odttpl import OdtTemplate, RichText, RichTextParagraph
 
 tpl = OdtTemplate("template.odt")
 
@@ -174,7 +174,7 @@ tpl.save("output.odt")
 當字串包含換行、Tab，而不想自行組 XML 時使用 `Listing`：
 
 ```python
-from odttlp import OdtTemplate, Listing
+from odttpl import OdtTemplate, Listing
 
 tpl = OdtTemplate("template.odt")
 tpl.render({"body": Listing("第一行\n第二行\n第三行")})
@@ -193,7 +193,7 @@ tpl.save("output.odt")
 ## InlineImage 嵌入圖片
 
 ```python
-from odttlp import OdtTemplate, InlineImage
+from odttpl import OdtTemplate, InlineImage
 
 tpl = OdtTemplate("template.odt")
 tpl.render({"logo": InlineImage(tpl, "logo.png", width="4cm", height="2cm")})

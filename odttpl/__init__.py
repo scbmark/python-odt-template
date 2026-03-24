@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-odttlp – ODT template engine for Python.
+odttpl – ODT template engine for Python.
 
 Mirrors the API of python-docx-template (docxtpl) but targets
 OpenDocument Format (.odt, .ods, .odp) files produced by

@@ -466,7 +466,7 @@ class OdtTemplate:
         """Register a text automatic style and return its generated name."""
         key: frozenset = frozenset((k, v) for k, v in props.items() if v)
         if key not in self._auto_styles:
-            self._auto_styles[key] = f"odttlp_T{len(self._auto_styles) + 1}"
+            self._auto_styles[key] = f"odttpl_T{len(self._auto_styles) + 1}"
         return self._auto_styles[key]
 
     def _build_auto_styles_xml(self) -> str:
@@ -551,7 +551,7 @@ class OdtTemplate:
 
         ext = ext.lower() or "png"
         digest = hashlib.md5(image_data).hexdigest()[:12]
-        name = f"odttlp_{digest}.{ext}"
+        name = f"odttpl_{digest}.{ext}"
         self._extra_images[name] = image_data
         return name
 

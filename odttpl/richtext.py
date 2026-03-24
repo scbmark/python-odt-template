@@ -176,7 +176,7 @@ class RichTextParagraph:
         rp.add(rt, parastyle="Heading_20_2")
         context = {"header": rp}
 
-    In your template use ``{{p header }}`` (the ``p`` prefix tells odttlp to
+    In your template use ``{{p header }}`` (the ``p`` prefix tells odttpl to
     strip the surrounding ``<text:p>`` so that the variable replaces the whole
     paragraph rather than being inserted inside one).
     """
