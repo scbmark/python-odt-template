@@ -1,126 +1,126 @@
 # python-odt-template
 
-[English](README.en.md) | 繁體中文
+English | [繁體中文](README.md)
 
 > [!WARNING]
-> 本專案由 AI 輔助開發（Vibe Coding）。程式碼未經完整人工審查，可能存在錯誤、安全漏洞或非預期行為。**請勿在生產環境中使用，風險自負。** 歡迎提交 Issue 或 PR 協助改善。
+> This project was developed with AI assistance (Vibe Coding). The code has not been fully reviewed by a human and may contain bugs, security vulnerabilities, or unexpected behavior. **Do not use in production environments. Use at your own risk.** Issues and PRs to improve the project are welcome.
 
 [![PyPI version](https://img.shields.io/pypi/v/odttpl.svg)](https://pypi.org/project/odttpl/)
 [![Python versions](https://img.shields.io/pypi/pyversions/odttpl.svg)](https://pypi.org/project/odttpl/)
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](LICENSE.txt)
 [![Tests](https://github.com/yourname/python-odt-template/actions/workflows/test.yml/badge.svg)](https://github.com/yourname/python-odt-template/actions)
 
-以 [Jinja2](https://jinja.palletsprojects.com/) 為引擎，用 LibreOffice `.odt` 文件作為範本來渲染文件。概念與用法仿照 [python-docx-template](https://github.com/elapouya/python-docx-template)，但針對 ODF 格式重新實作。
+A [Jinja2](https://jinja.palletsprojects.com/)-powered templating library that uses LibreOffice `.odt` files as templates to render documents. Inspired by and modeled after [python-docx-template](https://github.com/elapouya/python-docx-template), but re-implemented for the ODF format.
 
 ---
 
-## 特色
+## Features
 
-- **Jinja2 全支援**：在 `.odt` 範本中直接使用變數、迴圈、條件等語法
-- **XML 自動修復**：LibreOffice 儲存時可能拆分標籤，`patch_xml()` 自動還原
-- **表格列 / 段落層級控制**：`{%tr`, `{%p` 等快捷前綴可操控整個 ODF 元素
-- **RichText**：在同一變數中混合粗體、斜體、顏色、字級等格式
-- **Listing**：多行文字含換行、Tab、分頁的完整處理
-- **InlineImage**：嵌入圖片並自動更新 manifest
-- **多次渲染**：同一 `OdtTemplate` 物件可重複渲染不同資料
+- **Full Jinja2 support**: Use variables, loops, and conditionals directly inside `.odt` templates
+- **Automatic XML repair**: LibreOffice may split tags across XML nodes when saving; `patch_xml()` restores them automatically
+- **Table row / paragraph level control**: Shorthand prefixes like `{%tr` and `{%p` let you control entire ODF elements
+- **RichText**: Mix bold, italic, color, font size, and other formats within a single variable
+- **Listing**: Full support for multi-line text including line breaks, tabs, and page breaks
+- **InlineImage**: Embed images and automatically update the ODF manifest
+- **Multiple renders**: A single `OdtTemplate` object can be rendered repeatedly with different data
 
 ---
 
-## 安裝
+## Installation
 
 ```bash
 pip install odttpl
 ```
 
-或使用 [uv](https://github.com/astral-sh/uv)：
+Or with [uv](https://github.com/astral-sh/uv):
 
 ```bash
 uv add odttpl
 ```
 
-**需求**：Python 3.8+，依賴 `jinja2` 與 `lxml`（自動安裝）。
+**Requirements**: Python 3.8+. Dependencies `jinja2` and `lxml` are installed automatically.
 
 ---
 
-## 快速入門
+## Quick Start
 
-**1. 準備範本 `template.odt`**
+**1. Prepare a template `template.odt`**
 
-在 LibreOffice Writer 中輸入以下內容並儲存：
+Type the following in LibreOffice Writer and save:
 
 ```
-您好，{{ name }}！
+Hello, {{ name }}!
 
-您的訂單共有 {{ total }} 項商品。
+Your order contains {{ total }} items.
 ```
 
-**2. 渲染並輸出**
+**2. Render and save**
 
 ```python
 from odttpl import OdtTemplate
 
 tpl = OdtTemplate("template.odt")
-tpl.render({"name": "王小明", "total": 5})
+tpl.render({"name": "John", "total": 5})
 tpl.save("output.odt")
 ```
 
-**3. 用 LibreOffice 開啟 `output.odt`** 即可看到渲染結果。
+**3. Open `output.odt` in LibreOffice** to see the rendered result.
 
 ---
 
-## 製作 ODF 範本
+## Creating ODF Templates
 
-在 LibreOffice Writer 中直接輸入 Jinja2 標籤：
+Type Jinja2 tags directly in LibreOffice Writer:
 
-| 語法 | 用途 |
-|------|------|
-| `{{ variable }}` | 輸出變數 |
-| `{% for item in items %}` … `{% endfor %}` | 迴圈 |
-| `{% if condition %}` … `{% endif %}` | 條件 |
+| Syntax | Purpose |
+|--------|---------|
+| `{{ variable }}` | Output a variable |
+| `{% for item in items %}` … `{% endfor %}` | Loop |
+| `{% if condition %}` … `{% endif %}` | Conditional |
 
-> **注意**：LibreOffice 儲存時可能將 `{{ variable }}` 拆成多個 XML 節點。
-> `OdtTemplate` 會在載入時自動呼叫 `patch_xml()` 修正，使用者無需處理。
+> **Note**: LibreOffice may split `{{ variable }}` across multiple XML nodes when saving.
+> `OdtTemplate` automatically calls `patch_xml()` on load to fix this — no manual action needed.
 
 ---
 
-## Jinja2 標籤快捷語法
+## Jinja2 Tag Shorthand Prefixes
 
-ODF XML 有嚴格的巢狀結構。若要用 Jinja2 控制整個**表格列**或**段落**，需在對應 XML 元素內部加上帶前綴的標籤，`patch_xml` 會把整個元素替換為純 Jinja2 標籤。
+ODF XML has a strict nesting structure. To control an entire **table row** or **paragraph** with Jinja2, use tags with the appropriate prefix inside the corresponding XML element. `patch_xml` will then replace the entire element with a plain Jinja2 tag.
 
-| 前綴 | 對應 ODF 元素 | 典型用途 |
-|------|--------------|---------|
-| `{%tr` / `{{tr` | `<table:table-row>` | 表格列迴圈 |
-| `{%tc` / `{{tc` | `<table:table-cell>` | 儲存格層級控制 |
-| `{%p` / `{{p` | `<text:p>` | 段落層級條件／迴圈 |
-| `{%s` / `{{s` | `<text:span>` | 文字區間層級控制 |
+| Prefix | ODF Element | Typical Use |
+|--------|-------------|-------------|
+| `{%tr` / `{{tr` | `<table:table-row>` | Table row loops |
+| `{%tc` / `{{tc` | `<table:table-cell>` | Cell-level control |
+| `{%p` / `{{p` | `<text:p>` | Paragraph-level conditionals / loops |
+| `{%s` / `{{s` | `<text:span>` | Span-level control |
 
-### 表格列迴圈（`{%tr`）
+### Table Row Loop (`{%tr`)
 
-在 LibreOffice 建立一個兩欄表格：
+Create a two-column table in LibreOffice:
 
-| 欄位 A | 欄位 B |
-|-------|-------|
-| `{%tr for item in rows %}` | （空白） |
+| Column A | Column B |
+|----------|----------|
+| `{%tr for item in rows %}` | (empty) |
 | `{{ item.name }}` | `{{ item.price }}` |
-| `{%tr endfor %}` | （空白） |
+| `{%tr endfor %}` | (empty) |
 
-含 `{%tr` 的列在渲染後會被移除，只剩資料列重複輸出。
+Rows containing `{%tr` are removed after rendering; only the data rows are repeated.
 
-### 段落層級條件（`{%p`）
+### Paragraph-Level Conditional (`{%p`)
 
 ```
 {%p if show_section %}
-這整段只有在 show_section 為 True 時才會出現。
+This entire paragraph only appears when show_section is True.
 {%p endif %}
 ```
 
-含 `{%p` 的段落本身在渲染後消失。
+Paragraphs containing `{%p` are removed after rendering.
 
 ---
 
-## RichText 格式化文字
+## RichText Formatted Text
 
-使用 `RichText`（縮寫 `R`）可在同一變數中混合多種格式：
+Use `RichText` (alias `R`) to mix multiple formats within a single variable:
 
 ```python
 from odttpl import OdtTemplate, RichText
@@ -128,36 +128,36 @@ from odttpl import OdtTemplate, RichText
 tpl = OdtTemplate("template.odt")
 
 rt = RichText(tpl)
-rt.add("一般文字，")
-rt.add("粗體", bold=True)
-rt.add("紅色斜體", italic=True, color="#CC0000")
-rt.add("大字", size=18)
+rt.add("Plain text, ")
+rt.add("bold", bold=True)
+rt.add("red italic", italic=True, color="#CC0000")
+rt.add("large text", size=18)
 
 tpl.render({"greeting": rt})
 tpl.save("output.odt")
 ```
 
-範本中寫：`{{ greeting }}`
+In the template, write: `{{ greeting }}`
 
-### `RichText.add()` 參數
+### `RichText.add()` Parameters
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `text` | str | 文字內容 |
-| `style` | str | 範本內已存在的具名字元樣式 |
-| `bold` | bool | 粗體 |
-| `italic` | bool | 斜體 |
-| `underline` | bool / str | 底線；可指定樣式如 `"dotted"`, `"solid"` |
-| `strike` | bool | 刪除線 |
-| `color` | str | 字色，十六進位如 `"#FF0000"` |
-| `size` | int / float | 字級（pt） |
-| `font` | str | 字體名稱，如 `"Noto Sans TC"` |
-| `superscript` | bool | 上標 |
-| `subscript` | bool | 下標 |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `text` | str | Text content |
+| `style` | str | A named character style already defined in the template |
+| `bold` | bool | Bold |
+| `italic` | bool | Italic |
+| `underline` | bool / str | Underline; optionally specify style such as `"dotted"`, `"solid"` |
+| `strike` | bool | Strikethrough |
+| `color` | str | Text color in hex, e.g. `"#FF0000"` |
+| `size` | int / float | Font size in points |
+| `font` | str | Font name, e.g. `"Noto Sans"` |
+| `superscript` | bool | Superscript |
+| `subscript` | bool | Subscript |
 
-### RichTextParagraph — 跨段落格式
+### RichTextParagraph — Multi-paragraph Formatting
 
-若需從 Python 輸出含段落樣式的整個段落，使用 `RichTextParagraph`（縮寫 `RP`），並在範本中以 `{{p content }}` 取代整個段落：
+To output entire paragraphs with paragraph styles from Python, use `RichTextParagraph` (alias `RP`) and replace the placeholder paragraph in the template with `{{p content }}`:
 
 ```python
 from odttpl import OdtTemplate, RichText, RichTextParagraph
@@ -165,8 +165,8 @@ from odttpl import OdtTemplate, RichText, RichTextParagraph
 tpl = OdtTemplate("template.odt")
 
 rp = RichTextParagraph(tpl)
-rp.add(RichText(tpl, "標題文字", bold=True), parastyle="Heading_20_1")
-rp.add(RichText(tpl, "內文段落"))
+rp.add(RichText(tpl, "Heading text", bold=True), parastyle="Heading_20_1")
+rp.add(RichText(tpl, "Body paragraph"))
 
 tpl.render({"content": rp})
 tpl.save("output.odt")
@@ -174,28 +174,28 @@ tpl.save("output.odt")
 
 ---
 
-## Listing 多行文字
+## Listing — Multi-line Text
 
-當字串包含換行、Tab，而不想自行組 XML 時使用 `Listing`：
+Use `Listing` when a string contains newlines or tabs and you don't want to build the XML manually:
 
 ```python
 from odttpl import OdtTemplate, Listing
 
 tpl = OdtTemplate("template.odt")
-tpl.render({"body": Listing("第一行\n第二行\n第三行")})
+tpl.render({"body": Listing("Line one\nLine two\nLine three")})
 tpl.save("output.odt")
 ```
 
-| 特殊字元 | 渲染結果 |
-|---------|---------|
-| `\n` | 段落內換行（`<text:line-break/>`） |
-| `\t` | Tab 停格（`<text:tab/>`） |
-| `\a` | 開始新段落（沿用相同段落樣式） |
-| `\f` | 軟分頁後開始新段落 |
+| Special Character | Rendered As |
+|-------------------|-------------|
+| `\n` | In-paragraph line break (`<text:line-break/>`) |
+| `\t` | Tab stop (`<text:tab/>`) |
+| `\a` | New paragraph (same paragraph style) |
+| `\f` | Soft page break followed by a new paragraph |
 
 ---
 
-## InlineImage 嵌入圖片
+## InlineImage — Embed Images
 
 ```python
 from odttpl import OdtTemplate, InlineImage
@@ -205,56 +205,56 @@ tpl.render({"logo": InlineImage(tpl, "logo.png", width="4cm", height="2cm")})
 tpl.save("output.odt")
 ```
 
-範本中寫：`{{ logo }}`（放在一個段落內）
+In the template, write: `{{ logo }}` (inside a paragraph)
 
-`InlineImage` 會自動：
-1. 將圖片嵌入 ODF ZIP 的 `Pictures/` 目錄
-2. 更新 `META-INF/manifest.xml`
-3. 產生對應的 `<draw:frame>` XML
+`InlineImage` automatically:
+1. Embeds the image into the `Pictures/` directory inside the ODF ZIP
+2. Updates `META-INF/manifest.xml`
+3. Generates the corresponding `<draw:frame>` XML
 
-### 參數
+### Parameters
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `tpl` | OdtTemplate | 父範本物件 |
-| `image_descriptor` | str / Path / file-like | 圖片路徑或 BytesIO |
-| `width` | str | 寬度，如 `"5cm"`, `"2in"` |
-| `height` | str | 高度，如 `"3cm"` |
-| `anchor` | str | 錨點類型，預設 `"as-char"`（行內）；`"paragraph"` 為段落錨點 |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `tpl` | OdtTemplate | Parent template object |
+| `image_descriptor` | str / Path / file-like | Image path or BytesIO object |
+| `width` | str | Width, e.g. `"5cm"`, `"2in"` |
+| `height` | str | Height, e.g. `"3cm"` |
+| `anchor` | str | Anchor type; default `"as-char"` (inline); `"paragraph"` for paragraph anchor |
 
 ---
 
-## 進階用法
+## Advanced Usage
 
-### 自動跳脫（autoescape）
+### Autoescape
 
-若資料來自使用者輸入，建議啟用 `autoescape` 防止 XML 注入：
+If data comes from user input, enable `autoescape` to prevent XML injection:
 
 ```python
 tpl.render(context, autoescape=True)
 ```
 
-### 自訂 Jinja2 環境
+### Custom Jinja2 Environment
 
-傳入自訂的 `jinja2.Environment` 以新增過濾器或擴充功能：
+Pass a custom `jinja2.Environment` to add filters or extensions:
 
 ```python
 from jinja2 import Environment
 
 env = Environment()
-env.filters["currency"] = lambda v: f"NT${v:,.0f}"
+env.filters["currency"] = lambda v: f"${v:,.2f}"
 
 tpl.render(context, jinja_env=env)
 ```
 
-### 查詢範本中的未宣告變數
+### Inspect Undeclared Variables
 
 ```python
 variables = tpl.get_undeclared_variables()
 print(variables)  # {'name', 'total', 'items', ...}
 ```
 
-### 多次渲染
+### Multiple Renders
 
 ```python
 tpl = OdtTemplate("template.odt")
@@ -264,27 +264,27 @@ for record in records:
     tpl.save(f"output_{record['id']}.odt")
 ```
 
-每次呼叫 `render()` 都會從原始範本重新渲染，不會互相污染。
+Each call to `render()` starts fresh from the original template and does not carry over state from previous renders.
 
 ---
 
-## 開發
+## Development
 
 ```bash
 git clone https://github.com/yourname/python-odt-template.git
 cd python-odt-template
 
-# 建立虛擬環境並安裝開發依賴
+# Create a virtual environment and install dev dependencies
 uv venv && uv pip install -e ".[dev]"
 
-# 執行測試
+# Run tests
 uv run pytest tests/ -v
 ```
 
-歡迎提交 Issue 與 Pull Request！
+Issues and Pull Requests are welcome!
 
 ---
 
-## 授權
+## License
 
-本專案採用 [GNU Lesser General Public License v2.1](LICENSE.txt)，與 [python-docx-template](https://github.com/elapouya/python-docx-template) 相同。
+This project is licensed under the [GNU Lesser General Public License v2.1](LICENSE.txt), the same license as [python-docx-template](https://github.com/elapouya/python-docx-template).
