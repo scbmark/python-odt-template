@@ -2,6 +2,9 @@
 
 English | [繁體中文](README.md)
 
+> [!WARNING]
+> This project was developed with AI assistance (Vibe Coding). The code has not been fully reviewed by a human and may contain bugs, security vulnerabilities, or unexpected behavior. **Do not use in production environments. Use at your own risk.** Issues and PRs to improve the project are welcome.
+
 [![PyPI version](https://img.shields.io/pypi/v/odttpl.svg)](https://pypi.org/project/odttpl/)
 [![Python versions](https://img.shields.io/pypi/pyversions/odttpl.svg)](https://pypi.org/project/odttpl/)
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](LICENSE.txt)
