@@ -23,6 +23,8 @@ from lxml import etree  # ty:ignore[unresolved-import]
 from jinja2 import Environment, Template, meta
 from jinja2.exceptions import TemplateError
 
+from .subdoc import OdtSubdoc
+
 try:
     from html import escape
 except ImportError:
@@ -73,6 +75,9 @@ class OdtTemplate:
         # automatic text-style registry: frozenset(props) → style_name
         self._auto_styles: Dict[frozenset, str] = {}
         self.is_rendered = False
+        # subdoc tracking (reset on each render)
+        self._subdoc_list: list = []
+        self._subdoc_counter: int = 1
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -152,16 +157,13 @@ class OdtTemplate:
         # INSIDE a Jinja2 block (i.e. OO/LO split the tag across spans)
         # ----------------------------------------------------------------
         def _striptags(m: re.Match) -> str:
-            cleaned = re.sub(
-                r"</text:span>.*?<text:span[^>]*>",
-                "",
-                m.group(0),
-                flags=re.DOTALL,
-            )
-            # Remove any remaining inline XML tags (e.g. <text:s/>, <text:bookmark.../>)
-            # that LO/OO may have inserted inside a Jinja2 block
-            cleaned = re.sub(r"<[^>]+>", "", cleaned)
-            return cleaned
+            # Remove all inline XML tags inside the Jinja2 block while
+            # preserving text content.  A previous approach used
+            # `</text:span>.*?<text:span[^>]*>` first, but that pattern
+            # inadvertently consumed text nodes between span boundaries
+            # (e.g. `{{p sub }}` split by LO as
+            # `{<span>{</span>p sub <span>}</span>}` would lose `p sub`).
+            return re.sub(r"<[^>]+>", "", m.group(0))
 
         src_xml = re.sub(
             r"{%(?:(?!%}).)*|{#(?:(?!#}).)*|{{(?:(?!}}).)*",
@@ -547,6 +549,30 @@ class OdtTemplate:
         return content_xml
 
     # ------------------------------------------------------------------
+    # Subdoc management
+    # ------------------------------------------------------------------
+
+    def new_subdoc(self, odt_path: Optional[str] = None) -> OdtSubdoc:
+        """Create a new :class:`OdtSubdoc` associated with this template.
+
+        *odt_path* – optional path to an existing ``.odt`` file whose body
+        will be merged into the master document at render time.
+
+        Example::
+
+            sd = tpl.new_subdoc("chapter.odt")
+            tpl.render({"chapter": sd})
+
+        In the template use ``{%p chapter %}`` for block-level insertion.
+        """
+        return OdtSubdoc(self, odt_path)
+
+    def _register_subdoc(self, subdoc: OdtSubdoc) -> None:
+        """Register a subdoc so its styles and images are merged at render time."""
+        if subdoc not in self._subdoc_list:
+            self._subdoc_list.append(subdoc)
+
+    # ------------------------------------------------------------------
     # Image management (for InlineImage)
     # ------------------------------------------------------------------
 
@@ -605,6 +631,22 @@ class OdtTemplate:
         self._modified_files = {}
         self._extra_images = {}
         self._auto_styles = {}
+        self._subdoc_list = []
+        self._subdoc_counter = 1
+
+        # Reset any OdtSubdoc objects in the context so they get fresh prefixes
+        def _reset_subdocs(v: Any) -> None:
+            if isinstance(v, OdtSubdoc):
+                v._reset()
+            elif isinstance(v, (list, tuple)):
+                for item in v:
+                    _reset_subdocs(item)
+            elif isinstance(v, dict):
+                for item in v.values():
+                    _reset_subdocs(item)
+
+        for v in context.values():
+            _reset_subdocs(v)
 
         if autoescape:
             if jinja_env is None:
@@ -616,6 +658,19 @@ class OdtTemplate:
         content_xml = self.build_content_xml(context, jinja_env)
         if self._auto_styles:
             content_xml = self._inject_auto_styles(content_xml)
+
+        # Merge subdoc automatic styles and images (collected during rendering)
+        for subdoc in self._subdoc_list:
+            styles_xml_frag = subdoc._get_auto_styles_xml()
+            if styles_xml_frag:
+                content_xml = content_xml.replace(
+                    "</office:automatic-styles>",
+                    styles_xml_frag + "</office:automatic-styles>",
+                )
+            for path, data in subdoc._rendered_images.items():
+                fname = path[len("Pictures/"):]
+                self._extra_images[fname] = data
+
         self._modified_files["content.xml"] = content_xml.encode("utf-8")
 
         # --- styles.xml --------------------------------------------------

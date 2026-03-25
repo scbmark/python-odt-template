@@ -14,3 +14,4 @@ from .template import OdtTemplate  # noqa: F401
 from .richtext import RichText, RichTextParagraph, R, RP  # noqa: F401
 from .listing import Listing  # noqa: F401
 from .inline_image import InlineImage  # noqa: F401
+from .subdoc import OdtSubdoc  # noqa: F401
