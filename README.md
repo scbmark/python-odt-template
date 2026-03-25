@@ -22,6 +22,7 @@ A [Jinja2](https://jinja.palletsprojects.com/)-powered templating library that u
 - **RichText**: Mix bold, italic, color, font size, and other formats within a single variable
 - **Listing**: Full support for multi-line text including line breaks, tabs, and page breaks
 - **InlineImage**: Embed images and automatically update the ODF manifest
+- **Subdoc**: Embed the body of another `.odt` file (sub-document) into the master template, with automatic style and image merging
 - **Multiple renders**: A single `OdtTemplate` object can be rendered repeatedly with different data
 
 ---
@@ -221,6 +222,39 @@ In the template, write: `{{ logo }}` (inside a paragraph)
 | `width` | str | Width, e.g. `"5cm"`, `"2in"` |
 | `height` | str | Height, e.g. `"3cm"` |
 | `anchor` | str | Anchor type; default `"as-char"` (inline); `"paragraph"` for paragraph anchor |
+
+---
+
+## Subdoc — Embed Another ODT File
+
+Use `new_subdoc()` to embed the body of another `.odt` file into the master template. Paragraph styles and embedded images from the sub-document are automatically merged into the output.
+
+```python
+from odttpl import OdtTemplate
+
+tpl = OdtTemplate("main.odt")
+sub = tpl.new_subdoc("chapter.odt")
+tpl.render({"chapter": sub})
+tpl.save("output.odt")
+```
+
+In the master template, place `{{p chapter }}` on its own paragraph where you want the sub-document content inserted. The `{{p` prefix is required so the entire placeholder paragraph is replaced.
+
+### Embedding multiple sub-documents
+
+```python
+tpl = OdtTemplate("main.odt")
+intro = tpl.new_subdoc("intro.odt")
+body  = tpl.new_subdoc("body.odt")
+tpl.render({"intro": intro, "body": body})
+tpl.save("output.odt")
+```
+
+### Notes
+
+- **Style merging**: automatic styles (paragraph, character, etc.) defined in the sub-document are renamed with a unique prefix before being injected into the master to avoid collisions.
+- **Image merging**: images embedded in the sub-document are copied into the output archive automatically.
+- **Template variables**: sub-documents are plain `.odt` files — Jinja2 tags inside them are **not** evaluated. Only the rendered body XML is inserted.
 
 ---
 

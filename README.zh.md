@@ -22,6 +22,7 @@
 - **RichText**：在同一變數中混合粗體、斜體、顏色、字級等格式
 - **Listing**：多行文字含換行、Tab、分頁的完整處理
 - **InlineImage**：嵌入圖片並自動更新 manifest
+- **Subdoc**：將另一個 `.odt` 檔的內文嵌入主範本，樣式與圖片自動合併
 - **多次渲染**：同一 `OdtTemplate` 物件可重複渲染不同資料
 
 ---
@@ -221,6 +222,39 @@ tpl.save("output.odt")
 | `width` | str | 寬度，如 `"5cm"`, `"2in"` |
 | `height` | str | 高度，如 `"3cm"` |
 | `anchor` | str | 錨點類型，預設 `"as-char"`（行內）；`"paragraph"` 為段落錨點 |
+
+---
+
+## Subdoc — 嵌入其他 ODT 檔案
+
+使用 `new_subdoc()` 將另一個 `.odt` 檔案的內文嵌入主範本。子文件的段落樣式與嵌入圖片會自動合併到輸出檔中。
+
+```python
+from odttpl import OdtTemplate
+
+tpl = OdtTemplate("main.odt")
+sub = tpl.new_subdoc("chapter.odt")
+tpl.render({"chapter": sub})
+tpl.save("output.odt")
+```
+
+在主範本中，於想插入子文件的位置單獨放一個段落，內容寫 `{{p chapter }}`。必須使用 `{{p` 前綴，這樣整個佔位段落才會被替換。
+
+### 嵌入多個子文件
+
+```python
+tpl = OdtTemplate("main.odt")
+intro = tpl.new_subdoc("intro.odt")
+body  = tpl.new_subdoc("body.odt")
+tpl.render({"intro": intro, "body": body})
+tpl.save("output.odt")
+```
+
+### 注意事項
+
+- **樣式合併**：子文件中的自動樣式（段落、字元等）會加上唯一前綴後注入主文件，避免命名衝突。
+- **圖片合併**：子文件中的嵌入圖片會自動複製到輸出的 ZIP 壓縮包中。
+- **範本變數**：子文件是一般的 `.odt` 檔，其中的 Jinja2 標籤**不會**被渲染，只有內文 XML 會被插入。
 
 ---
 
