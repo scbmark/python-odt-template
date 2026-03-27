@@ -1,6 +1,6 @@
 # python-odt-template
 
-[English](README.en.md) | 繁體中文
+[English](README.md) | 繁體中文
 
 > [!WARNING]
 > 本專案由 AI 輔助開發（Vibe Coding）。程式碼未經完整人工審查，可能存在錯誤、安全漏洞或非預期行為。**請勿在生產環境中使用，風險自負。** 歡迎提交 Issue 或 PR 協助改善。

@@ -1,6 +1,6 @@
 # python-odt-template
 
-English | [繁體中文](README.md)
+English | [繁體中文](README.zh-TW.md)
 
 > [!WARNING]
 > This project was developed with AI assistance (Vibe Coding). The code has not been fully reviewed by a human and may contain bugs, security vulnerabilities, or unexpected behavior. **Do not use in production environments. Use at your own risk.** Issues and PRs to improve the project are welcome.
