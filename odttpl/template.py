@@ -219,30 +219,8 @@ class OdtTemplate:
         # Step 5 – remove orphaned </text:span> closing tags that were left
         # behind when patch_xml Step 1 removed the matching opening <text:span>
         # (happens when LO stores {% as bare "{" + <span>% ...)
-        #
-        # Strategy: track <text:span> open/close depth.  A </text:span> that
-        # arrives when depth == 0 has no matching opener and is discarded.
         # ----------------------------------------------------------------
-        parts = re.split(
-            r"(<text:span(?:\s[^>]*)?>|<text:span\s*/>|</text:span>)",
-            src_xml,
-        )
-        depth = 0
-        cleaned: list[str] = []
-        for part in parts:
-            if re.fullmatch(r"<text:span(?:\s[^>]*)?>", part):
-                depth += 1
-                cleaned.append(part)
-            elif re.fullmatch(r"<text:span\s*/>", part):
-                cleaned.append(part)  # self-closing, depth unchanged
-            elif part == "</text:span>":
-                if depth > 0:
-                    depth -= 1
-                    cleaned.append(part)
-                # else: orphaned closing tag — discard
-            else:
-                cleaned.append(part)
-        src_xml = "".join(cleaned)
+        src_xml = self._remove_orphaned_close_spans(src_xml)
 
         # ----------------------------------------------------------------
         # Step 6 – unescape HTML entities/smart-quotes inside {{ … }} / {% … %}
@@ -302,7 +280,55 @@ class OdtTemplate:
         )
         dst_xml = self.resolve_listing(dst_xml)
         dst_xml = self._merge_consecutive_lists(dst_xml)
+        dst_xml = self._remove_orphaned_close_spans(dst_xml)
         return dst_xml
+
+    # ------------------------------------------------------------------
+    # Orphaned span cleanup – shared by patch_xml and render_xml_part
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _remove_orphaned_close_spans(xml: str) -> str:
+        """Remove ``</text:span>`` closing tags that have no matching opener.
+
+        LibreOffice sometimes stores Jinja2 tags split across ``<text:span>``
+        elements.  After ``patch_xml`` strips the stray XML inside those tags
+        some closing ``</text:span>`` tags are left without a corresponding
+        opener.  The same situation arises after Jinja2 *renders* a ``{% for %}``
+        loop that begins inside a nested span: each iteration's loop body starts
+        with the closing tags of those surrounding spans, which are orphaned for
+        every iteration after the first.
+
+        Strategy: track ``<text:span>`` open/close depth.  A ``</text:span>``
+        that arrives when depth == 0 has no matching opener and is discarded.
+        The depth is also reset to 0 at each paragraph boundary so that a
+        malformed paragraph cannot corrupt subsequent paragraphs.
+        """
+        parts = re.split(
+            r"(<text:span(?:\s[^>]*)?>|<text:span\s*/>|</text:span>"
+            r"|<text:p(?:\s[^>]*)?>|</text:p>)",
+            xml,
+        )
+        depth = 0
+        cleaned: list[str] = []
+        for part in parts:
+            if re.fullmatch(r"<text:span(?:\s[^>]*)?>", part):
+                depth += 1
+                cleaned.append(part)
+            elif re.fullmatch(r"<text:span\s*/>", part):
+                cleaned.append(part)  # self-closing, depth unchanged
+            elif part == "</text:span>":
+                if depth > 0:
+                    depth -= 1
+                    cleaned.append(part)
+                # else: orphaned closing tag — discard
+            elif re.fullmatch(r"<text:p(?:\s[^>]*)?>", part) or part == "</text:p>":
+                # Spans must not cross paragraph boundaries; reset depth.
+                depth = 0
+                cleaned.append(part)
+            else:
+                cleaned.append(part)
+        return "".join(cleaned)
 
     # ------------------------------------------------------------------
     # List merging – fix auto-numbering after for-loop expansion
