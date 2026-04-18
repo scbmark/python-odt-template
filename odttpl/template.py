@@ -226,15 +226,22 @@ class OdtTemplate:
         # Step 6 – unescape HTML entities/smart-quotes inside {{ … }} / {% … %}
         # ----------------------------------------------------------------
         def _clean_tags(m: re.Match) -> str:
+            # Order matters: &amp; must be unescaped LAST so that literal
+            # "&quot;" in source (encoded as "&amp;quot;") is not double-decoded.
             return (
                 m.group(0)
                 .replace("&#8216;", "'")
                 .replace("&lt;", "<")
                 .replace("&gt;", ">")
+                .replace("&quot;", '"')
+                .replace("&apos;", "'")
+                .replace("&#160;", " ")
+                .replace("&nbsp;", " ")
                 .replace("\u201c", '"')
                 .replace("\u201d", '"')
                 .replace("\u2018", "'")
                 .replace("\u2019", "'")
+                .replace("&amp;", "&")
             )
 
         src_xml = re.sub(r"(?<=\{[\{%])(.*?)(?=[\}%]})", _clean_tags, src_xml)

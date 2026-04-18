@@ -338,3 +338,61 @@ def test_new_subdoc_returns_odtsubdoc(tmp_path):
     tpl = OdtTemplate(master)
     sd = tpl.new_subdoc()
     assert isinstance(sd, OdtSubdoc)
+
+
+# ---------------------------------------------------------------------------
+# patch_xml: XML entity unescaping inside Jinja tags
+# ---------------------------------------------------------------------------
+
+
+def _patch(xml: str) -> str:
+    # Minimal stub: patch_xml only needs a valid path on __init__ for self._path,
+    # but it doesn't touch the file. Use any existing template.
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
+    return tpl.patch_xml(xml)
+
+
+def test_patch_xml_unescapes_quot_inside_jinja():
+    # LibreOffice stores `"` inside {% %} as &quot;, which breaks the Jinja lexer.
+    src = '<text:p>{% if x != &quot;&quot; %}yes{% endif %}</text:p>'
+    out = _patch(src)
+    assert "&quot;" not in out
+    assert '{% if x != "" %}' in out
+
+
+def test_patch_xml_unescapes_apos_inside_jinja():
+    src = "<text:p>{% if x == &apos;A&apos; %}yes{% endif %}</text:p>"
+    out = _patch(src)
+    assert "&apos;" not in out
+    assert "{% if x == 'A' %}" in out
+
+
+def test_patch_xml_unescapes_amp_inside_jinja():
+    src = "<text:p>{{ a &amp; b }}</text:p>"
+    out = _patch(src)
+    assert "&amp;" not in out
+    assert "{{ a & b }}" in out
+
+
+def test_patch_xml_unescapes_nbsp_inside_jinja():
+    src = "<text:p>{%&#160;if&#160;x&#160;%}yes{% endif %}</text:p>"
+    out = _patch(src)
+    assert "&#160;" not in out
+    assert "{% if x %}" in out
+
+
+def test_patch_xml_preserves_entities_outside_jinja():
+    # Entities in plain text (outside Jinja tags) must survive patch_xml,
+    # otherwise ODF content breaks.
+    src = "<text:p>A &amp; B</text:p><text:p>{% if x %}ok{% endif %}</text:p>"
+    out = _patch(src)
+    assert "A &amp; B" in out
+
+
+def test_patch_xml_literal_amp_quot_not_double_decoded():
+    # If the source wants a literal `&quot;` in the rendered output, it's
+    # stored as `&amp;quot;`. Decoding order must not double-decode this.
+    # patch_xml only cleans entities INSIDE Jinja tags; outside stays intact.
+    src = "<text:p>value is &amp;quot; literally</text:p>"
+    out = _patch(src)
+    assert "&amp;quot;" in out
