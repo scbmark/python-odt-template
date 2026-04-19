@@ -190,7 +190,28 @@ class OdtTemplate:
                 r"<%(tag)s[ >](?:(?!<%(tag)s[ >]).)*"
                 r"({%%|{{)%(y)s ([^}%%]*(?:%%}|}})).*?</%(tag)s>" % {"tag": tag, "y": y}
             )
-            src_xml = re.sub(pat, r"\1 \2", src_xml, flags=re.DOTALL)
+            if y == "li":
+                # Preserve `text:start-value` restart intent: when the
+                # `<text:list-item>` being erased carries `text:start-value`,
+                # insert a marker so the enclosing `<text:list>` can have its
+                # `text:continue-numbering` attribute stripped. Placing
+                # `text:start-value` on the surviving (loop-body) item would
+                # reset every iteration to the same number.
+                def _li_sub(m: "re.Match[str]") -> str:
+                    open_m = re.match(r"<text:list-item[^>]*>", m.group(0))
+                    open_tag = open_m.group(0) if open_m else ""
+                    body = f"{m.group(1)} {m.group(2)}"
+                    if "text:start-value" in open_tag:
+                        return self._LI_RESTART_MARKER + body
+                    return body
+
+                src_xml = re.sub(pat, _li_sub, src_xml, flags=re.DOTALL)
+            else:
+                src_xml = re.sub(pat, r"\1 \2", src_xml, flags=re.DOTALL)
+
+        # Consume list-restart markers: for each marker, strip
+        # `text:continue-numbering="true"` from the enclosing `<text:list>`.
+        src_xml = self._apply_list_restart_markers(src_xml)
 
         # {#y ... #} comment blocks (no span, only tr/tc/p)
         for y, tag in _TAG_MAP[:3]:
@@ -290,6 +311,47 @@ class OdtTemplate:
         dst_xml = self._merge_consecutive_lists(dst_xml)
         dst_xml = self._remove_orphaned_close_spans(dst_xml)
         return dst_xml
+
+    # ------------------------------------------------------------------
+    # List-restart marker handling
+    # ------------------------------------------------------------------
+
+    _LI_RESTART_MARKER = "__ODTTPL_LIST_RESTART__"
+
+    @classmethod
+    def _apply_list_restart_markers(cls, xml: str) -> str:
+        """Strip `text:continue-numbering="true"` from each `<text:list>` that
+        encloses a restart marker, then remove the markers.
+
+        Markers are inserted by `patch_xml` when a `{%li ...%}` shorthand
+        removes a `<text:list-item>` that carried `text:start-value`. Without
+        this, the enclosing list keeps continuing the previous list's numbering
+        after the start-value attribute is erased.
+        """
+        marker = cls._LI_RESTART_MARKER
+        if marker not in xml:
+            return xml
+        parts = re.split(
+            r"(<text:list(?![-\w])[^>]*>|</text:list>|" + re.escape(marker) + r")",
+            xml,
+        )
+        stack: list[int] = []
+        for idx, part in enumerate(parts):
+            if part == marker:
+                if stack:
+                    open_idx = stack[-1]
+                    parts[open_idx] = re.sub(
+                        r'\s*text:continue-numbering="(?:true|1)"',
+                        "",
+                        parts[open_idx],
+                    )
+                parts[idx] = ""
+            elif part == "</text:list>":
+                if stack:
+                    stack.pop()
+            elif re.fullmatch(r"<text:list(?![-\w])[^>]*>", part):
+                stack.append(idx)
+        return "".join(parts)
 
     # ------------------------------------------------------------------
     # Orphaned span cleanup – shared by patch_xml and render_xml_part
