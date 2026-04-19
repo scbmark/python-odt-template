@@ -18,7 +18,8 @@ A [Jinja2](https://jinja.palletsprojects.com/)-powered templating library that u
 
 - **Full Jinja2 support**: Use variables, loops, and conditionals directly inside `.odt` templates
 - **Automatic XML repair**: LibreOffice may split tags across XML nodes when saving; `patch_xml()` restores them automatically
-- **Table row / paragraph level control**: Shorthand prefixes like `{%tr` and `{%p` let you control entire ODF elements
+- **Table row / paragraph / list-item level control**: Shorthand prefixes like `{%tr`, `{%p`, and `{%li` let you control entire ODF elements
+- **Automatic well-formed check**: Rendered XML is validated after every render; if a Jinja tag crosses an ODF element boundary, the error message points you to the right shorthand
 - **RichText**: Mix bold, italic, color, font size, and other formats within a single variable
 - **Listing**: Full support for multi-line text including line breaks, tabs, and page breaks
 - **InlineImage**: Embed images and automatically update the ODF manifest
@@ -94,6 +95,7 @@ ODF XML has a strict nesting structure. To control an entire **table row** or **
 | `{%tc` / `{{tc` | `<table:table-cell>` | Cell-level control |
 | `{%p` / `{{p` | `<text:p>` | Paragraph-level conditionals / loops |
 | `{%s` / `{{s` | `<text:span>` | Span-level control |
+| `{%li` / `{{li` | `<text:list-item>` | Bulleted / numbered list loops |
 
 ### Table Row Loop (`{%tr`)
 
@@ -116,6 +118,22 @@ This entire paragraph only appears when show_section is True.
 ```
 
 Paragraphs containing `{%p` are removed after rendering.
+
+### List Item Loop (`{%li`)
+
+A Jinja `{% for %}` that crosses `<text:list-item>` boundaries will produce unbalanced XML (each iteration opens a new `<text:list-item>` without closing the previous one). Use `{%li` to anchor the loop on the list-item element itself.
+
+In LibreOffice Writer, create a bulleted or numbered list with **three sibling items** — the first and last act as sentinels and are removed after rendering:
+
+```
+• {%li for item in items %}
+• {{ item }}
+• {%li endfor %}
+```
+
+After rendering, only the middle list-item is repeated once per `item`, producing clean sibling `<text:list-item>` elements inside the same `<text:list>` (so automatic numbering is continuous).
+
+> If a Jinja for-loop is left crossing `<text:list-item>` boundaries without `{%li`, `render()` raises `ValueError: Rendered content.xml is not well-formed XML …` and suggests the correct shorthand.
 
 ---
 

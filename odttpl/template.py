@@ -182,6 +182,7 @@ class OdtTemplate:
             ("tc", "table:table-cell"),
             ("p", "text:p"),
             ("s", "text:span"),
+            ("li", "text:list-item"),
         ]
         for y, tag in _TAG_MAP:
             # {%y ... %} and {{y ... }} (expression)
@@ -485,6 +486,7 @@ class OdtTemplate:
         xml = self.get_content_xml()
         xml = self.patch_xml(xml)
         xml = self.render_xml_part(xml, context, jinja_env)
+        self._check_well_formed(xml, "content.xml")
         return xml
 
     def build_styles_xml(
@@ -495,7 +497,35 @@ class OdtTemplate:
         xml = self.get_styles_xml()
         xml = self.patch_xml(xml)
         xml = self.render_xml_part(xml, context, jinja_env)
+        self._check_well_formed(xml, "styles.xml")
         return xml
+
+    @staticmethod
+    def _check_well_formed(xml: str, part_name: str) -> None:
+        """Parse rendered XML and raise a descriptive error if malformed.
+
+        When a Jinja2 ``{% for %}`` crosses an ODF element boundary (e.g. a
+        ``{% for %}`` opened inside a ``<text:p>`` but closed inside a
+        ``<text:list-item>`` in a different subtree), each loop iteration
+        leaves unclosed tags behind — LibreOffice then refuses to open the
+        file with a generic "malformed" error. Catching it here gives a far
+        more actionable message and points the user at the element
+        shorthands (``{%tr %}``, ``{%tc %}``, ``{%p %}``, ``{%s %}``,
+        ``{%li %}``) that exist specifically to keep loop boundaries aligned
+        with XML element boundaries.
+        """
+        try:
+            etree.fromstring(xml.encode("utf-8"))
+        except etree.XMLSyntaxError as exc:
+            raise ValueError(
+                f"Rendered {part_name} is not well-formed XML: {exc}. "
+                "A common cause is a Jinja2 tag (e.g. {% for %} / {% endfor %}) "
+                "that crosses an ODF element boundary. Use the element-level "
+                "shorthands to align loop boundaries with the element being "
+                "repeated: {%tr %} for <table:table-row>, {%tc %} for "
+                "<table:table-cell>, {%p %} for <text:p>, {%s %} for "
+                "<text:span>, {%li %} for <text:list-item>."
+            ) from exc
 
     # ------------------------------------------------------------------
     # Automatic style management (for RichText)

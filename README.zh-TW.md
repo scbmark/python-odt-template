@@ -18,7 +18,8 @@
 
 - **Jinja2 全支援**：在 `.odt` 範本中直接使用變數、迴圈、條件等語法
 - **XML 自動修復**：LibreOffice 儲存時可能拆分標籤，`patch_xml()` 自動還原
-- **表格列 / 段落層級控制**：`{%tr`, `{%p` 等快捷前綴可操控整個 ODF 元素
+- **表格列 / 段落 / 清單項目層級控制**：`{%tr`、`{%p`、`{%li` 等快捷前綴可操控整個 ODF 元素
+- **渲染後自動 well-formed 檢查**：每次渲染完成後會驗證輸出 XML；若 Jinja 標籤跨越 ODF 元素邊界，錯誤訊息會指出應改用哪個 shorthand
 - **RichText**：在同一變數中混合粗體、斜體、顏色、字級等格式
 - **Listing**：多行文字含換行、Tab、分頁的完整處理
 - **InlineImage**：嵌入圖片並自動更新 manifest
@@ -94,6 +95,7 @@ ODF XML 有嚴格的巢狀結構。若要用 Jinja2 控制整個**表格列**或
 | `{%tc` / `{{tc` | `<table:table-cell>` | 儲存格層級控制 |
 | `{%p` / `{{p` | `<text:p>` | 段落層級條件／迴圈 |
 | `{%s` / `{{s` | `<text:span>` | 文字區間層級控制 |
+| `{%li` / `{{li` | `<text:list-item>` | 項目符號／編號清單迴圈 |
 
 ### 表格列迴圈（`{%tr`）
 
@@ -116,6 +118,22 @@ ODF XML 有嚴格的巢狀結構。若要用 Jinja2 控制整個**表格列**或
 ```
 
 含 `{%p` 的段落本身在渲染後消失。
+
+### 清單項目迴圈（`{%li`）
+
+若 Jinja `{% for %}` 跨越 `<text:list-item>` 邊界，每次展開都會開啟一個新的 `<text:list-item>` 而不關閉前一個，導致 XML 失衡。使用 `{%li` 可將迴圈錨定在 list-item 元素本身。
+
+在 LibreOffice Writer 中建立一個項目符號或編號清單，**放三個兄弟項目**（第一、三項作為 sentinel，渲染後會被移除）：
+
+```
+• {%li for item in items %}
+• {{ item }}
+• {%li endfor %}
+```
+
+渲染後只有中間那個 list-item 會依 `items` 重複展開，產生同一個 `<text:list>` 下連續的兄弟 `<text:list-item>`（自動編號得以連續）。
+
+> 若 for-loop 仍跨越 `<text:list-item>` 邊界而未使用 `{%li`，`render()` 會拋出 `ValueError: Rendered content.xml is not well-formed XML …`，並在訊息中建議對應的 shorthand。
 
 ---
 

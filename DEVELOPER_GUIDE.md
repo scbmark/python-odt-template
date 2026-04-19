@@ -82,6 +82,7 @@ python-odt-template/
 | `render(context, ...)` | 主流程入口，協調所有步驟 |
 | `save(output)` | 將渲染結果寫出為 ZIP |
 | `patch_xml(xml)` | 修補 LibreOffice 切碎 Jinja2 標籤的問題（見第 5 節） |
+| `_check_well_formed(xml, part_name)` | 渲染後以 lxml parse 驗證 XML；失敗時拋 `ValueError` 並提示 shorthand（見第 5.4 節） |
 | `render_xml_part(xml, context)` | 執行 Jinja2 渲染並做後處理 |
 | `resolve_listing(xml)` | 將 `\n\t\a\f` 展開為 ODF XML 元素 |
 | `_merge_consecutive_lists(xml)` | 修正迴圈展開後產生的多餘 `<text:list>` |
@@ -90,6 +91,18 @@ python-odt-template/
 | `_add_image(image)` | 將 InlineImage 登記至 `_extra_images` |
 | `new_subdoc(path)` | 建立 OdtSubdoc 實例 |
 | `get_undeclared_variables()` | 分析範本，回傳所有未宣告變數 |
+
+**元素級 shorthand 對照（`_TAG_MAP`）**：`patch_xml` 會把包裹 shorthand Jinja tag 的整個 ODF 元素替換為純 Jinja tag，讓迴圈展開時能產生一組完整、對稱的元素。
+
+| shorthand | 對應 ODF 元素 |
+|-----------|---------------|
+| `{%tr` / `{{tr` | `<table:table-row>` |
+| `{%tc` / `{{tc` | `<table:table-cell>` |
+| `{%p`  / `{{p`  | `<text:p>` |
+| `{%s`  / `{{s`  | `<text:span>` |
+| `{%li` / `{{li` | `<text:list-item>` |
+
+> 只有 tr / tc / p 這三者另外支援 `{#y …#}` 的註解形式 shorthand（由 `_TAG_MAP[:3]` 的迴圈處理）；s / li 不在此註解 shorthand 範圍內。
 
 ---
 
@@ -261,7 +274,7 @@ save(output)
 |------|------|
 | 1 | 移除緊鄰 `{{`、`{%`、`}}`、`%}` 的多餘標籤 |
 | 2 | 移除 Jinja2 區塊**內部**的 span 邊界標籤 |
-| 3 | 處理 `{%tr`、`{%p`、`{%s` 等縮寫，從所在元素中提取出來 |
+| 3 | 處理 `{%tr`、`{%tc`、`{%p`、`{%s`、`{%li` 等元素級 shorthand（`_TAG_MAP`），把整個 ODF 元素替換為純 Jinja tag |
 | 4 | 處理 `{%-`、`-%}` 空白修剪語法 |
 | 5 | 追蹤 span 巢狀深度，丟棄孤立的 `</text:span>` |
 | 6 | 反轉義標籤內的 HTML 實體（`&amp;` → `&` 等） |
@@ -305,6 +318,34 @@ save(output)
 ```
 
 相同格式只會產生一個樣式定義，節省檔案大小。
+
+---
+
+### 5.4 `_check_well_formed()` — 渲染後的 XML 驗證
+
+**位置**：`build_content_xml` 與 `build_styles_xml` 的結尾。
+
+**作用**：以 `lxml.etree.fromstring()` 解析剛產出的 XML，若不是 well-formed 就拋出 `ValueError`，並在訊息中列出最常見原因（Jinja tag 跨越 ODF 元素邊界）與可用的 shorthand 對照（tr / tc / p / s / li）。
+
+**實作概要**：
+
+```python
+@staticmethod
+def _check_well_formed(xml: str, part_name: str) -> None:
+    try:
+        etree.fromstring(xml.encode("utf-8"))
+    except etree.XMLSyntaxError as exc:
+        raise ValueError(
+            f"Rendered {part_name} is not well-formed XML: {exc}. "
+            "A common cause is a Jinja2 tag (e.g. {% for %} / {% endfor %}) "
+            "that crosses an ODF element boundary. Use the element-level "
+            "shorthands: {%tr %}, {%tc %}, {%p %}, {%s %}, {%li %}."
+        ) from exc
+```
+
+**典型觸發情境**：使用者把 `{% for appendix in appendixs %}` 放在「備考：」那段 `<text:p>` 裡，但 `{% endfor %}` 落在隨後 `<text:list><text:list-item><text:p>` 裡。Jinja 會將兩個 tag 之間的原文（含 `</text:p><text:list…><text:list-item><text:p>`）整段複製 N 次，每輪各自開啟一個新的 `<text:list>` 與 `<text:list-item>` 卻永不關閉，導致結構失衡。`_check_well_formed` 會在渲染階段即時阻斷並提示改用 `{%li` shorthand。
+
+**設計考量**：以失敗成本換取易讀的錯誤訊息 — 在回傳給 `save()` 之前就攔截問題，避免使用者事後在 LibreOffice 打開才看到「content.xml 在 x, y 處格式錯誤」。
 
 ---
 
