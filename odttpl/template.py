@@ -492,41 +492,81 @@ class OdtTemplate:
         * ``\\t``  → ``<text:tab/>``
         * ``\\a``  → new paragraph (closes / reopens ``<text:p>``)
         * ``\\f``  → soft page break
+
+        ``\\a`` and ``\\f`` may appear inside one or more nested
+        ``<text:span>`` elements (e.g. when a ``RichText`` value is rendered
+        into a span-wrapped Jinja variable). To keep the output well-formed,
+        all currently open spans are closed before the paragraph break and
+        re-opened in the new paragraph using their original attributes.
         """
 
-        _SPECIAL = frozenset("\n\t\a\f")
+        _SPECIAL_PARA = frozenset("\a\f")
 
-        def _fix_text(text: str, para_attrs: str) -> str:
-            """Convert special chars in a single text node to ODF elements."""
+        _TOKEN_RE = re.compile(
+            r"<text:span(?:\s[^>]*)?>"      # span open
+            r"|<text:span\s*/>"              # self-closing span (no-op for stack)
+            r"|</text:span>"                 # span close
+            r"|<[^>]+>"                      # any other tag
+        )
+
+        def _split_text(text: str, para_attrs: str, open_spans: list[str]) -> str:
+            """Convert special chars in a single text node to ODF elements.
+
+            ``open_spans`` is the list of currently-open ``<text:span ...>``
+            opening-tag strings (outer → inner). For ``\\a`` / ``\\f`` we close
+            them before the new ``<text:p>`` and re-open them after, so span
+            nesting stays balanced after the paragraph split.
+            """
             text = text.replace("\t", "<text:tab/>")
-            text = text.replace(
-                "\a",
-                f"</text:p><text:p{para_attrs}>",
-            )
-            text = text.replace(
-                "\f",
-                f"</text:p><text:p><text:soft-page-break/></text:p>"
-                f"<text:p{para_attrs}>",
-            )
+            if _SPECIAL_PARA.intersection(text):
+                close_spans = "</text:span>" * len(open_spans)
+                reopen_spans = "".join(open_spans)
+                text = text.replace(
+                    "\a",
+                    f"{close_spans}</text:p>"
+                    f"<text:p{para_attrs}>{reopen_spans}",
+                )
+                text = text.replace(
+                    "\f",
+                    f"{close_spans}</text:p>"
+                    f"<text:p><text:soft-page-break/></text:p>"
+                    f"<text:p{para_attrs}>{reopen_spans}",
+                )
             text = text.replace("\n", "<text:line-break/>")
             return text
 
-        def _maybe_fix(text: str, para_attrs: str) -> str:
-            """Only apply _fix_text when the node actually contains special chars."""
-            if text.strip() and _SPECIAL.intersection(text):
-                return _fix_text(text, para_attrs)
-            return text
-
-        def _resolve_para(m: re.Match) -> str:
+        def _resolve_para(m: "re.Match[str]") -> str:
             full = m.group(0)
-            para_attrs_m = re.match(r"<text:p([^>]*)>", full)
-            para_attrs = para_attrs_m.group(1) if para_attrs_m else ""
-            # Replace text nodes (both inside <text:span> and bare in <text:p>)
-            return re.sub(
-                r"(?<=>)([^<]+)(?=<)",
-                lambda x: _maybe_fix(x.group(0), para_attrs),
-                full,
-            )
+            para_open_m = re.match(r"<text:p([^>]*)>", full)
+            para_attrs = para_open_m.group(1) if para_open_m else ""
+            para_open_end = para_open_m.end() if para_open_m else 0
+            inner = full[para_open_end:-len("</text:p>")]
+
+            # Walk inner content tracking <text:span> stack. Between tags lie
+            # text nodes which may contain \a/\f/\n/\t.
+            out: list[str] = [full[:para_open_end]]
+            span_stack: list[str] = []
+            pos = 0
+            for tok in _TOKEN_RE.finditer(inner):
+                # Text node before this tag.
+                if tok.start() > pos:
+                    text_node = inner[pos : tok.start()]
+                    out.append(_split_text(text_node, para_attrs, span_stack))
+                tag = tok.group(0)
+                if tag.startswith("<text:span") and tag.endswith("/>"):
+                    pass  # self-closing — does not affect stack
+                elif tag == "</text:span>":
+                    if span_stack:
+                        span_stack.pop()
+                elif tag.startswith("<text:span"):
+                    span_stack.append(tag)
+                out.append(tag)
+                pos = tok.end()
+            # Trailing text node before </text:p>.
+            if pos < len(inner):
+                out.append(_split_text(inner[pos:], para_attrs, span_stack))
+            out.append("</text:p>")
+            return "".join(out)
 
         xml = re.sub(
             r"<text:p[^>]*>.*?</text:p>",

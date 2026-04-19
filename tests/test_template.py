@@ -105,6 +105,25 @@ def test_richtext_color():
     assert 'fo:color="#FF0000"' in xml
 
 
+def test_richtext_paragraph_break_inside_span():
+    """RichText containing \\a (Listing 換段標記) inside a span-wrapped variable
+    must produce well-formed XML with span boundaries closed/reopened across
+    the new paragraph split."""
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "span_wrap_var.odt"))
+    rt = RichText(tpl)
+    rt.add("AAA\aBBB", size=14)
+    tpl.render({"x": rt})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+
+    # Two paragraphs after \a → </text:p><text:p ...> split
+    assert xml.count("<text:p ") + xml.count("<text:p>") >= 2
+    assert "AAA" in xml and "BBB" in xml
+    # Both halves must remain wrapped by the auto style and survive the split
+    assert xml.count("odttpl_T1") >= 2
+
+
 def test_richtext_named_style():
     tpl = OdtTemplate(os.path.join(TEMPLATES, "simple_var.odt"))
     rt = RichText(tpl, "Styled", style="Emphasis")

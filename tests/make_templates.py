@@ -125,6 +125,13 @@ make_odt(
 )
 
 make_odt(
+    "span_wrap_var.odt",
+    '<text:p text:style-name="P3">'
+    '<text:span text:style-name="T6">${{ x }}</text:span>'
+    "</text:p>",
+)
+
+make_odt(
     "conditional.odt",
     """\
       <text:p>{%p if show %}</text:p>
