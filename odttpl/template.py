@@ -76,6 +76,8 @@ class OdtTemplate:
         self._auto_styles: Dict[frozenset, str] = {}
         # automatic list-style registry: style_name → NumberedListStyle (or compatible)
         self._list_styles: Dict[str, Any] = {}
+        # automatic paragraph-style registry: frozenset(props) → style_name
+        self._para_styles: Dict[frozenset, str] = {}
         self.is_rendered = False
         # subdoc tracking (reset on each render)
         self._subdoc_list: list = []
@@ -711,13 +713,48 @@ class OdtTemplate:
         """Return XML fragments for all registered automatic list styles."""
         return "".join(style.xml for style in self._list_styles.values())
 
+    def _register_para_style(self, **props: Any) -> str:
+        """Register a paragraph automatic style and return its generated name.
+
+        Currently supports ``margin_left`` and ``text_indent`` (ODF length
+        strings like ``"2cm"``). Empty / None props are ignored.
+        """
+        key: frozenset = frozenset((k, v) for k, v in props.items() if v)
+        if not key:
+            return ""
+        if key not in self._para_styles:
+            self._para_styles[key] = f"odttpl_P{len(self._para_styles) + 1}"
+        return self._para_styles[key]
+
+    def _build_para_styles_xml(self) -> str:
+        """Return XML fragments for all registered automatic paragraph styles."""
+        parts = []
+        for key, name in self._para_styles.items():
+            props = dict(key)
+            pp: list[str] = []
+            if props.get("margin_left"):
+                pp.append(f'fo:margin-left="{props["margin_left"]}"')
+            if props.get("text_indent"):
+                pp.append(f'fo:text-indent="{props["text_indent"]}"')
+            pp_str = " ".join(pp)
+            parts.append(
+                f'<style:style style:name="{name}" style:family="paragraph">'
+                f"<style:paragraph-properties {pp_str}/>"
+                f"</style:style>"
+            )
+        return "".join(parts)
+
     def _inject_auto_styles(self, content_xml: str) -> str:
         """Inject automatic text and list styles into content.xml.
 
         Handles both the self-closing form ``<office:automatic-styles/>``
         and the expanded form ``<office:automatic-styles>…</office:automatic-styles>``.
         """
-        styles_xml = self._build_auto_styles_xml() + self._build_list_styles_xml()
+        styles_xml = (
+            self._build_auto_styles_xml()
+            + self._build_para_styles_xml()
+            + self._build_list_styles_xml()
+        )
         if not styles_xml:
             return content_xml
         # Self-closing form → expand and inject
@@ -818,6 +855,7 @@ class OdtTemplate:
         self._extra_images = {}
         self._auto_styles = {}
         self._list_styles = {}
+        self._para_styles = {}
         self._subdoc_list = []
         self._subdoc_counter = 1
 
@@ -843,7 +881,7 @@ class OdtTemplate:
 
         # --- content.xml -------------------------------------------------
         content_xml = self.build_content_xml(context, jinja_env)
-        if self._auto_styles or self._list_styles:
+        if self._auto_styles or self._list_styles or self._para_styles:
             content_xml = self._inject_auto_styles(content_xml)
 
         # Merge subdoc automatic styles and images (collected during rendering)

@@ -28,7 +28,7 @@ and substitutes the StructuredBlock's rendered XML (mixed ``<text:p>`` and
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 try:
     from html import escape
@@ -48,6 +48,15 @@ class StructuredBlockError(ValueError):
 # ---------------------------------------------------------------------------
 # List-style definition
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class BulletLevelSpec:
+    """One level of a bullet list style."""
+
+    bullet_char: str = "\u2022"  # • (bullet)
+    space_before: str = "0.5cm"
+    min_label_width: str = "0.5cm"
 
 
 @dataclass
@@ -136,6 +145,64 @@ class NumberedListStyle:
         )
 
 
+class BulletListStyle:
+    """Programmatic ``<text:list-style>`` for bullet lists.
+
+    ``levels`` accepts either ``BulletLevelSpec`` instances or plain strings
+    (interpreted as the bullet character for that level with default spacing).
+    """
+
+    def __init__(
+        self,
+        tpl: "OdtTemplate",
+        levels: List[Union[str, dict, BulletLevelSpec]],
+        name: Optional[str] = None,
+    ) -> None:
+        if not levels:
+            raise StructuredBlockError("BulletListStyle requires at least one level")
+        self.tpl = tpl
+        specs: List[BulletLevelSpec] = []
+        for lvl in levels:
+            if isinstance(lvl, BulletLevelSpec):
+                specs.append(lvl)
+            elif isinstance(lvl, str):
+                specs.append(BulletLevelSpec(bullet_char=lvl))
+            elif isinstance(lvl, dict):
+                specs.append(BulletLevelSpec(**lvl))
+            else:
+                raise StructuredBlockError(
+                    f"unsupported bullet level spec: {type(lvl)!r}"
+                )
+        self.levels: List[BulletLevelSpec] = specs
+        self.name = name or tpl._next_list_style_name()
+        tpl._register_list_style(self)
+
+    @property
+    def xml(self) -> str:
+        parts = [f'<text:list-style style:name="{self.name}">']
+        for idx, spec in enumerate(self.levels, start=1):
+            parts.append(self._level_xml(idx, spec))
+        parts.append("</text:list-style>")
+        return "".join(parts)
+
+    @staticmethod
+    def _level_xml(level: int, spec: BulletLevelSpec) -> str:
+        bullet = escape(spec.bullet_char, quote=True)
+        return (
+            f'<text:list-level-style-bullet text:level="{level}" '
+            f'text:bullet-char="{bullet}">'
+            "<style:list-level-properties "
+            'text:list-level-position-and-space-mode="label-alignment">'
+            "<style:list-level-label-alignment "
+            'text:label-followed-by="listtab" '
+            f'fo:margin-left="{spec.space_before}" '
+            f'fo:text-indent="-{spec.min_label_width}"'
+            "/>"
+            "</style:list-level-properties>"
+            "</text:list-level-style-bullet>"
+        )
+
+
 # ---------------------------------------------------------------------------
 # AST nodes
 # ---------------------------------------------------------------------------
@@ -182,7 +249,7 @@ class StructuredBlock:
     def __init__(
         self,
         tpl: "OdtTemplate",
-        default_list_style: Union[str, NumberedListStyle, None] = None,
+        default_list_style: Union[str, "NumberedListStyle", "BulletListStyle", None] = None,
     ) -> None:
         self.tpl = tpl
         self._default_list_style = default_list_style
@@ -191,10 +258,10 @@ class StructuredBlock:
         # _list_stack[i] is the open _ListGroup for level (i+1)
         self._list_stack: List[_ListGroup] = []
         self._current_item: Optional[ListItemNode] = None
-        # NumberedListStyle instances referenced by this block; re-registered
-        # on every _build() call so they survive OdtTemplate.render() resets.
-        self._referenced_styles: List[NumberedListStyle] = []
-        if isinstance(default_list_style, NumberedListStyle):
+        # List-style instances referenced by this block; re-registered on
+        # every _build() call so they survive OdtTemplate.render() resets.
+        self._referenced_styles: List[Any] = []
+        if isinstance(default_list_style, (NumberedListStyle, BulletListStyle)):
             self._track_style(default_list_style)
 
     # ------------------------------------------------------------------
@@ -239,7 +306,7 @@ class StructuredBlock:
         text: Union[str, RichText],
         *,
         level: int = 1,
-        list_style: Union[str, NumberedListStyle, None] = None,
+        list_style: Union[str, "NumberedListStyle", "BulletListStyle", None] = None,
         parastyle: Optional[str] = None,
     ) -> "StructuredBlock":
         """Append a list item at the given 1-based level."""
@@ -251,7 +318,7 @@ class StructuredBlock:
                 "intermediate levels must be added first"
             )
 
-        if isinstance(list_style, NumberedListStyle):
+        if isinstance(list_style, (NumberedListStyle, BulletListStyle)):
             self._track_style(list_style)
         style_name = self._resolve_style(list_style) or self._default_style_name()
 
@@ -305,17 +372,18 @@ class StructuredBlock:
         self._current_item = None
 
     def _resolve_style(
-        self, style: Union[str, NumberedListStyle, None]
+        self,
+        style: Union[str, "NumberedListStyle", "BulletListStyle", None],
     ) -> Optional[str]:
         if style is None:
             return None
         if isinstance(style, str):
             return style
-        if isinstance(style, NumberedListStyle):
+        if isinstance(style, (NumberedListStyle, BulletListStyle)):
             return style.name
         raise StructuredBlockError(f"unsupported list_style type: {type(style)!r}")
 
-    def _track_style(self, style: NumberedListStyle) -> None:
+    def _track_style(self, style: Any) -> None:
         if style not in self._referenced_styles:
             self._referenced_styles.append(style)
 
@@ -344,9 +412,13 @@ class StructuredBlock:
         return escape(str(text))
 
     def _render_paragraph(self, node: ParagraphNode) -> str:
-        style_attr = (
-            f' text:style-name="{node.parastyle}"' if node.parastyle else ""
-        )
+        style_name = node.parastyle
+        if not style_name and (node.margin_left or node.text_indent):
+            style_name = self.tpl._register_para_style(
+                margin_left=node.margin_left,
+                text_indent=node.text_indent,
+            )
+        style_attr = f' text:style-name="{style_name}"' if style_name else ""
         return f"<text:p{style_attr}>{self._render_inline(node.text)}</text:p>"
 
     def _render_item(self, item: ListItemNode) -> str:

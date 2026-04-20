@@ -18,7 +18,9 @@ from .subdoc import OdtSubdoc  # noqa: F401
 from .structured_block import (  # noqa: F401
     StructuredBlock,
     NumberedListStyle,
+    BulletListStyle,
     LevelSpec,
+    BulletLevelSpec,
     StructuredBlockError,
     SB,
     NLS,

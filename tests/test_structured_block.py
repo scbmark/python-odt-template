@@ -14,7 +14,9 @@ from odttpl import (
     RichText,
     StructuredBlock,
     NumberedListStyle,
+    BulletListStyle,
     LevelSpec,
+    BulletLevelSpec,
     StructuredBlockError,
 )
 
@@ -398,17 +400,73 @@ def test_list_then_unrelated_paragraph_closes_list():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="Phase 3: paragraph style registration not yet implemented")
 def test_paragraph_margin_left_creates_para_style():
     tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
     block = StructuredBlock(tpl)
-    block.add_paragraph("indented", margin_left="2cm")
+    block.add_paragraph("indented", margin_left="2cm", text_indent="-0.5cm")
     tpl.render({"content": block})
     buf = io.BytesIO()
     tpl.save(buf)
     xml = _content_xml(buf.getvalue())
 
+    # Auto-generated paragraph style is registered AND referenced.
     assert 'fo:margin-left="2cm"' in xml
+    assert 'fo:text-indent="-0.5cm"' in xml
+    assert re.search(
+        r'<style:style\s+style:name="odttpl_P1"\s+style:family="paragraph"', xml
+    )
+    assert re.search(r'<text:p\s+text:style-name="odttpl_P1"', xml)
+
+
+# ---------------------------------------------------------------------------
+# 19. BulletListStyle — bullet chars rendered as list-level-style-bullet
+# ---------------------------------------------------------------------------
+
+
+def test_bullet_list_style_renders_bullets():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    bullets = BulletListStyle(tpl, levels=["\u2022", "\u25e6"])
+    block = StructuredBlock(tpl, default_list_style=bullets)
+    block.add_list_item("first", level=1)
+    block.add_list_item("second", level=2)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+
+    etree.fromstring(xml.encode("utf-8"))
+    assert "<text:list-level-style-bullet " in xml
+    assert 'text:bullet-char="\u2022"' in xml
+    assert 'text:bullet-char="\u25e6"' in xml
+
+
+def test_bullet_list_style_accepts_spec_and_dict():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    bullets = BulletListStyle(
+        tpl,
+        levels=[
+            BulletLevelSpec(bullet_char="-", space_before="1cm"),
+            {"bullet_char": "*", "min_label_width": "0.3cm"},
+        ],
+    )
+    block = StructuredBlock(tpl, default_list_style=bullets)
+    block.add_list_item("a", level=1)
+    block.add_list_item("b", level=2)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+
+    etree.fromstring(xml.encode("utf-8"))
+    assert 'text:bullet-char="-"' in xml
+    assert 'text:bullet-char="*"' in xml
+    assert 'fo:margin-left="1cm"' in xml
+
+
+def test_bullet_list_style_empty_raises():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    with pytest.raises(StructuredBlockError):
+        BulletListStyle(tpl, levels=[])
 
 
 # ---------------------------------------------------------------------------
