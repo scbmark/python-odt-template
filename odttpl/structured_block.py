@@ -28,6 +28,7 @@ and substitutes the StructuredBlock's rendered XML (mixed ``<text:p>`` and
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 try:
@@ -48,6 +49,21 @@ class StructuredBlockError(ValueError):
 # ---------------------------------------------------------------------------
 # List-style definition
 # ---------------------------------------------------------------------------
+
+
+class LabelFollowedBy(str, Enum):
+    """What follows a numbered-list label in LibreOffice label-alignment mode."""
+
+    LISTTAB = "listtab"
+    TAB = "listtab"
+    SPACE = "space"
+    NOTHING = "nothing"
+    NONE = "nothing"
+    NEWLINE = "newline"
+    LINEBREAK = "newline"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass
@@ -73,14 +89,22 @@ class LevelSpec:
 
     ``display_levels`` controls how many parent levels are concatenated into the
     label, e.g. ``display_levels=2`` at level 2 produces ``"1.1."``.
+
+    Numbered-list positioning follows LibreOffice's label-alignment mode:
+    ``first_line_indent`` maps directly to ``fo:text-indent`` (usually
+    negative for hanging indents), ``indent_at`` maps to ``fo:margin-left``,
+    ``label_followed_by`` accepts ``LabelFollowedBy`` values, and
+    ``tab_stop_at`` sets the list tab stop when the label is followed by a tab.
     """
 
     format: str = "1"
     suffix: str = "."
     prefix: str = ""
     display_levels: int = 1
-    space_before: str = "0.5cm"
-    min_label_width: str = "0.5cm"
+    first_line_indent: str = "-0.5cm"
+    indent_at: str = "0.5cm"
+    label_followed_by: LabelFollowedBy = LabelFollowedBy.LISTTAB
+    tab_stop_at: Optional[str] = None
     start_value: int = 1
 
 
@@ -124,6 +148,32 @@ class NumberedListStyle:
         return num_format
 
     @staticmethod
+    def _normalize_label_followed_by(value: LabelFollowedBy) -> str:
+        if isinstance(value, LabelFollowedBy):
+            return value.value
+        raise StructuredBlockError(
+            "label_followed_by must be a LabelFollowedBy value, "
+            f"got {value!r}"
+        )
+
+    @staticmethod
+    def _label_alignment_xml(spec: LevelSpec) -> str:
+        followed_by = NumberedListStyle._normalize_label_followed_by(
+            spec.label_followed_by
+        )
+        attrs = [
+            f'text:label-followed-by="{followed_by}"',
+            f'fo:margin-left="{escape(spec.indent_at, quote=True)}"',
+            f'fo:text-indent="{escape(spec.first_line_indent, quote=True)}"',
+        ]
+        if followed_by == "listtab":
+            tab_stop_at = spec.tab_stop_at or spec.indent_at
+            attrs.append(
+                f'text:list-tab-stop-position="{escape(tab_stop_at, quote=True)}"'
+            )
+        return "<style:list-level-label-alignment " + " ".join(attrs) + "/>"
+
+    @staticmethod
     def _level_xml(level: int, spec: LevelSpec) -> str:
         attrs = [f'text:level="{level}"']
         if spec.format:
@@ -144,11 +194,7 @@ class NumberedListStyle:
             f"<text:list-level-style-number {attr_str}>"
             "<style:list-level-properties "
             'text:list-level-position-and-space-mode="label-alignment">'
-            "<style:list-level-label-alignment "
-            'text:label-followed-by="listtab" '
-            f'fo:margin-left="{spec.space_before}" '
-            f'fo:text-indent="-{spec.min_label_width}"'
-            "/>"
+            f"{NumberedListStyle._label_alignment_xml(spec)}"
             "</style:list-level-properties>"
             "</text:list-level-style-number>"
         )

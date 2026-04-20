@@ -21,6 +21,7 @@ from .structured_block import (  # noqa: F401
     BulletListStyle,
     LevelSpec,
     BulletLevelSpec,
+    LabelFollowedBy,
     StructuredBlockError,
     SB,
     NLS,

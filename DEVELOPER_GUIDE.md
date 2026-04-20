@@ -216,7 +216,7 @@ context = {"chapter": subdoc}
 
 ### 3.6 `structured_block.py` — 程式化段落＋巢狀清單 builder
 
-**公開 API**：`StructuredBlock`（別名 `SB`）、`NumberedListStyle`（別名 `NLS`）、`BulletListStyle`、`LevelSpec`、`BulletLevelSpec`、`StructuredBlockError`。
+**公開 API**：`StructuredBlock`（別名 `SB`）、`NumberedListStyle`（別名 `NLS`）、`BulletListStyle`、`LevelSpec`、`BulletLevelSpec`、`LabelFollowedBy`、`StructuredBlockError`。
 
 **定位**：補足 `{%li %}` 迴圈難以表達的情境 — 文件結構（段落 / 清單層級 / 清單項目內的延伸段落）由 Python 端邏輯決定，而非靜態範本形狀。
 
@@ -256,6 +256,7 @@ context = {"content": block}
 - 建構時就呼叫 `tpl._register_list_style(self)`（立即登錄、名稱可自帶或由 `tpl._next_list_style_name()` 產生）。
 - 各自以 `.xml` property 生成 `<text:list-style>…</text:list-style>`，前者用 `<text:list-level-style-number>`、後者用 `<text:list-level-style-bullet>`。
 - `LevelSpec.format` 支援 `"1"`、`"a"`、`"A"`、`"i"`、`"I"`、`"一"`、或 `""`，不做白名單驗證；其中 `"一"` 會輸出為 LibreOffice 相容的 `style:num-format="一, 二, 三, ..."`。
+- `LevelSpec` 的 numbered-list 縮排使用 LibreOffice label-alignment：`first_line_indent` → `fo:text-indent`、`indent_at` → `fo:margin-left`、`label_followed_by` → `text:label-followed-by`。`label_followed_by` 只接受 `LabelFollowedBy` enum；tab 模式會輸出 `text:list-tab-stop-position`（使用 `tab_stop_at`，未指定則使用 `indent_at`）。
 - `BulletListStyle.levels` 接受 `BulletLevelSpec` / `dict` / 純字串（單字元 bullet）三種寫法。
 
 **嚴格檢查**：`add_list_item` 對 `level<1`、跳級 (`level > 目前深度+1`) 皆拋 `StructuredBlockError`；`add_paragraph(in_list_item=True)` 於無開啟項目時同樣拋出。

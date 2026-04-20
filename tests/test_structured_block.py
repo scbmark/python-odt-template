@@ -17,6 +17,7 @@ from odttpl import (
     BulletListStyle,
     LevelSpec,
     BulletLevelSpec,
+    LabelFollowedBy,
     StructuredBlockError,
 )
 
@@ -298,6 +299,82 @@ def test_numbered_list_style_custom_levels():
     assert 'style:num-format="A"' in xml
     assert 'style:num-suffix=")"' in xml
     assert 'style:num-format="1"' in xml
+
+
+def test_numbered_list_style_renders_libreoffice_label_alignment():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    custom = NumberedListStyle(
+        tpl,
+        levels=[
+            LevelSpec(
+                format="1",
+                first_line_indent="-0.7cm",
+                indent_at="1.4cm",
+            ),
+            LevelSpec(
+                format="1",
+                label_followed_by=LabelFollowedBy.SPACE,
+                first_line_indent="0cm",
+                indent_at="2cm",
+            ),
+            LevelSpec(format="1", label_followed_by=LabelFollowedBy.NOTHING),
+        ],
+    )
+    block = StructuredBlock(tpl, default_list_style=custom)
+    block.add_list_item("top", level=1)
+    block.add_list_item("nested", level=2)
+    block.add_list_item("deep", level=3)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+
+    etree.fromstring(xml.encode("utf-8"))
+    assert 'text:label-followed-by="listtab"' in xml
+    assert 'fo:margin-left="1.4cm"' in xml
+    assert 'fo:text-indent="-0.7cm"' in xml
+    assert 'text:list-tab-stop-position="1.4cm"' in xml
+    assert 'text:label-followed-by="space"' in xml
+    assert 'fo:margin-left="2cm"' in xml
+    assert 'fo:text-indent="0cm"' in xml
+    assert 'text:label-followed-by="nothing"' in xml
+
+
+def test_numbered_list_style_renders_custom_tab_stop():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    custom = NumberedListStyle(
+        tpl,
+        levels=[
+            LevelSpec(
+                format="1",
+                label_followed_by=LabelFollowedBy.TAB,
+                tab_stop_at="1.2cm",
+            ),
+        ],
+    )
+    block = StructuredBlock(tpl, default_list_style=custom)
+    block.add_list_item("top", level=1)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+
+    etree.fromstring(xml.encode("utf-8"))
+    assert 'text:label-followed-by="listtab"' in xml
+    assert 'text:list-tab-stop-position="1.2cm"' in xml
+
+
+def test_numbered_list_style_rejects_string_label_followed_by():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    custom = NumberedListStyle(
+        tpl,
+        levels=[
+            LevelSpec(format="1", label_followed_by="space"),
+        ],
+    )
+
+    with pytest.raises(StructuredBlockError, match="LabelFollowedBy"):
+        _ = custom.xml
 
 
 def test_numbered_list_style_supports_chinese_numerals():

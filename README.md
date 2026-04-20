@@ -317,7 +317,7 @@ tpl.save("out.odt")
 If you do not pass a `list_style`, the block auto-registers a 5-level `1./1.1./1.1.1.` style named `odttpl_L{n}`. To customize:
 
 ```python
-from odttpl import StructuredBlock, NumberedListStyle, LevelSpec
+from odttpl import StructuredBlock, NumberedListStyle, LevelSpec, LabelFollowedBy
 
 numbering = NumberedListStyle(
     tpl,
@@ -326,12 +326,15 @@ numbering = NumberedListStyle(
         LevelSpec(format="一", suffix="、"),     # 一、二、三、…
         LevelSpec(format="1", suffix=".",       # 1. 2. 3. …
                   display_levels=1),
+        LevelSpec(format="1", label_followed_by=LabelFollowedBy.SPACE),
     ],
 )
 block = StructuredBlock(tpl, default_list_style=numbering)
 ```
 
 `LevelSpec.format` accepts ODF `style:num-format` values (`"1"`, `"a"`, `"A"`, `"i"`, `"I"`, `"一"`, or `""`). Use `format="一"` for Chinese lowercase numerals (`一、二、三、…`); it is emitted with LibreOffice's compatible CJK numbering token. `display_levels=2` at level 2 produces concatenated labels like `1.1.`.
+
+Numbered-list indentation uses LibreOffice's label-alignment model: `first_line_indent` maps directly to `fo:text-indent` (use a signed value such as `"-0.5cm"` for the usual hanging indent), and `indent_at` maps to `fo:margin-left` for the following lines. Use `LabelFollowedBy.LISTTAB`, `LabelFollowedBy.SPACE`, `LabelFollowedBy.NOTHING`, or `LabelFollowedBy.NEWLINE` for `label_followed_by`. When the label is followed by a tab, `tab_stop_at` sets `text:list-tab-stop-position`, defaulting to `indent_at`.
 
 ### `BulletListStyle`
 

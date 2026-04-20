@@ -317,7 +317,7 @@ tpl.save("out.odt")
 未指定 `list_style` 時，block 會自動註冊一份 5 層、`1./1.1./1.1.1.` 的編號樣式，名稱為 `odttpl_L{n}`。若要自訂：
 
 ```python
-from odttpl import StructuredBlock, NumberedListStyle, LevelSpec
+from odttpl import StructuredBlock, NumberedListStyle, LevelSpec, LabelFollowedBy
 
 numbering = NumberedListStyle(
     tpl,
@@ -326,12 +326,15 @@ numbering = NumberedListStyle(
         LevelSpec(format="一", suffix="、"),     # 一、二、三、…
         LevelSpec(format="1", suffix=".",       # 1. 2. 3. …
                   display_levels=1),
+        LevelSpec(format="1", label_followed_by=LabelFollowedBy.SPACE),
     ],
 )
 block = StructuredBlock(tpl, default_list_style=numbering)
 ```
 
 `LevelSpec.format` 接受 ODF 的 `style:num-format`（`"1"`、`"a"`、`"A"`、`"i"`、`"I"`、`"一"`、或 `""`）。使用 `format="一"` 可產生中文小寫數字（`一、二、三、…`）；輸出 ODT 時會轉成 LibreOffice 相容的 CJK 編號格式。`display_levels=2` 於第二層會產出串接標籤，如 `1.1.`。
+
+編號清單縮排採用 LibreOffice 的 label-alignment 模型：`first_line_indent` 會直接輸出為 `fo:text-indent`（常見凸排可用 `"-0.5cm"` 這種帶正負號的值），`indent_at` 會輸出為 `fo:margin-left`，代表首行以後文字開始的位置。`label_followed_by` 請使用 `LabelFollowedBy.LISTTAB`、`LabelFollowedBy.SPACE`、`LabelFollowedBy.NOTHING`、或 `LabelFollowedBy.NEWLINE`。若編號後接定位點，`tab_stop_at` 會輸出為 `text:list-tab-stop-position`，未指定時預設使用 `indent_at`。
 
 ### `BulletListStyle`
 
