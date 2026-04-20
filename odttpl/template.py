@@ -74,6 +74,8 @@ class OdtTemplate:
         self._extra_images: Dict[str, bytes] = {}
         # automatic text-style registry: frozenset(props) → style_name
         self._auto_styles: Dict[frozenset, str] = {}
+        # automatic list-style registry: style_name → NumberedListStyle (or compatible)
+        self._list_styles: Dict[str, Any] = {}
         self.is_rendered = False
         # subdoc tracking (reset on each render)
         self._subdoc_list: list = []
@@ -183,6 +185,7 @@ class OdtTemplate:
             ("p", "text:p"),
             ("s", "text:span"),
             ("li", "text:list-item"),
+            ("block", "text:p"),
         ]
         for y, tag in _TAG_MAP:
             # {%y ... %} and {{y ... }} (expression)
@@ -691,27 +694,45 @@ class OdtTemplate:
             )
         return "".join(parts)
 
+    def _next_list_style_name(self) -> str:
+        """Generate the next ``odttpl_L{n}`` list-style name."""
+        return f"odttpl_L{len(self._list_styles) + 1}"
+
+    def _register_list_style(self, style: Any) -> str:
+        """Register a list-style (e.g. NumberedListStyle) under its ``.name``.
+
+        Idempotent on the same instance; subsequent calls with a different
+        instance bearing the same name will replace the previous entry.
+        """
+        self._list_styles[style.name] = style
+        return style.name
+
+    def _build_list_styles_xml(self) -> str:
+        """Return XML fragments for all registered automatic list styles."""
+        return "".join(style.xml for style in self._list_styles.values())
+
     def _inject_auto_styles(self, content_xml: str) -> str:
-        """Inject automatic text styles into content.xml.
+        """Inject automatic text and list styles into content.xml.
 
         Handles both the self-closing form ``<office:automatic-styles/>``
         and the expanded form ``<office:automatic-styles>…</office:automatic-styles>``.
         """
-        styles_xml = self._build_auto_styles_xml()
+        styles_xml = self._build_auto_styles_xml() + self._build_list_styles_xml()
         if not styles_xml:
             return content_xml
         # Self-closing form → expand and inject
-        content_xml = re.sub(
+        new_xml, n_subs = re.subn(
             r"<office:automatic-styles\s*/>",
             f"<office:automatic-styles>{styles_xml}</office:automatic-styles>",
             content_xml,
         )
+        if n_subs:
+            return new_xml
         # Expanded form → insert before closing tag
-        content_xml = content_xml.replace(
+        return content_xml.replace(
             "</office:automatic-styles>",
             styles_xml + "</office:automatic-styles>",
         )
-        return content_xml
 
     # ------------------------------------------------------------------
     # Subdoc management
@@ -796,6 +817,7 @@ class OdtTemplate:
         self._modified_files = {}
         self._extra_images = {}
         self._auto_styles = {}
+        self._list_styles = {}
         self._subdoc_list = []
         self._subdoc_counter = 1
 
@@ -821,7 +843,7 @@ class OdtTemplate:
 
         # --- content.xml -------------------------------------------------
         content_xml = self.build_content_xml(context, jinja_env)
-        if self._auto_styles:
+        if self._auto_styles or self._list_styles:
             content_xml = self._inject_auto_styles(content_xml)
 
         # Merge subdoc automatic styles and images (collected during rendering)

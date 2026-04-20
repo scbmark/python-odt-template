@@ -139,4 +139,34 @@ make_odt(
       <text:p>{%p endif %}</text:p>""",
 )
 
+make_odt(
+    "structured_block.odt",
+    """\
+      <text:p text:style-name="Default">Header</text:p>
+      <text:p>{{block content}}</text:p>
+      <text:p text:style-name="Default">Footer</text:p>""",
+)
+
+make_odt(
+    "structured_block_in_cell.odt",
+    """\
+      <table:table table:name="T1">
+        <table:table-column/>
+        <table:table-row>
+          <table:table-cell><text:p>{{block content}}</text:p></table:table-cell>
+        </table:table-row>
+      </table:table>""",
+)
+
+make_odt(
+    "structured_block_with_li.odt",
+    """\
+      <text:p>{{block content}}</text:p>
+      <text:list text:style-name="L1">
+        <text:list-item><text:p>{%li for x in xs %}</text:p></text:list-item>
+        <text:list-item><text:p>{{ x }}</text:p></text:list-item>
+        <text:list-item><text:p>{%li endfor %}</text:p></text:list-item>
+      </text:list>""",
+)
+
 print("All templates created.")
