@@ -300,6 +300,26 @@ def test_numbered_list_style_custom_levels():
     assert 'style:num-format="1"' in xml
 
 
+def test_numbered_list_style_supports_chinese_numerals():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    custom = NumberedListStyle(
+        tpl,
+        levels=[
+            LevelSpec(format="一", suffix="、"),
+        ],
+    )
+    block = StructuredBlock(tpl, default_list_style=custom)
+    block.add_list_item("top", level=1)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+
+    etree.fromstring(xml.encode("utf-8"))
+    assert 'style:num-format="一, 二, 三, ..."' in xml
+    assert 'style:num-suffix="、"' in xml
+
+
 # ---------------------------------------------------------------------------
 # 13. Well-formed check after complex render
 # ---------------------------------------------------------------------------

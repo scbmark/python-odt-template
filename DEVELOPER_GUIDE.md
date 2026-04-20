@@ -255,6 +255,7 @@ context = {"content": block}
 **`NumberedListStyle` / `BulletListStyle`**：
 - 建構時就呼叫 `tpl._register_list_style(self)`（立即登錄、名稱可自帶或由 `tpl._next_list_style_name()` 產生）。
 - 各自以 `.xml` property 生成 `<text:list-style>…</text:list-style>`，前者用 `<text:list-level-style-number>`、後者用 `<text:list-level-style-bullet>`。
+- `LevelSpec.format` 支援 `"1"`、`"a"`、`"A"`、`"i"`、`"I"`、`"一"`、或 `""`，不做白名單驗證；其中 `"一"` 會輸出為 LibreOffice 相容的 `style:num-format="一, 二, 三, ..."`。
 - `BulletListStyle.levels` 接受 `BulletLevelSpec` / `dict` / 純字串（單字元 bullet）三種寫法。
 
 **嚴格檢查**：`add_list_item` 對 `level<1`、跳級 (`level > 目前深度+1`) 皆拋 `StructuredBlockError`；`add_paragraph(in_list_item=True)` 於無開啟項目時同樣拋出。

@@ -323,6 +323,7 @@ numbering = NumberedListStyle(
     tpl,
     levels=[
         LevelSpec(format="A", suffix=")"),      # A) B) C) …
+        LevelSpec(format="一", suffix="、"),     # 一、二、三、…
         LevelSpec(format="1", suffix=".",       # 1. 2. 3. …
                   display_levels=1),
     ],
@@ -330,7 +331,7 @@ numbering = NumberedListStyle(
 block = StructuredBlock(tpl, default_list_style=numbering)
 ```
 
-`LevelSpec.format` accepts ODF `style:num-format` values (`"1"`, `"a"`, `"A"`, `"i"`, `"I"`, or `""`). `display_levels=2` at level 2 produces concatenated labels like `1.1.`.
+`LevelSpec.format` accepts ODF `style:num-format` values (`"1"`, `"a"`, `"A"`, `"i"`, `"I"`, `"一"`, or `""`). Use `format="一"` for Chinese lowercase numerals (`一、二、三、…`); it is emitted with LibreOffice's compatible CJK numbering token. `display_levels=2` at level 2 produces concatenated labels like `1.1.`.
 
 ### `BulletListStyle`
 

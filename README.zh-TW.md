@@ -323,6 +323,7 @@ numbering = NumberedListStyle(
     tpl,
     levels=[
         LevelSpec(format="A", suffix=")"),      # A) B) C) …
+        LevelSpec(format="一", suffix="、"),     # 一、二、三、…
         LevelSpec(format="1", suffix=".",       # 1. 2. 3. …
                   display_levels=1),
     ],
@@ -330,7 +331,7 @@ numbering = NumberedListStyle(
 block = StructuredBlock(tpl, default_list_style=numbering)
 ```
 
-`LevelSpec.format` 接受 ODF 的 `style:num-format`（`"1"`、`"a"`、`"A"`、`"i"`、`"I"`、或 `""`）。`display_levels=2` 於第二層會產出串接標籤，如 `1.1.`。
+`LevelSpec.format` 接受 ODF 的 `style:num-format`（`"1"`、`"a"`、`"A"`、`"i"`、`"I"`、`"一"`、或 `""`）。使用 `format="一"` 可產生中文小寫數字（`一、二、三、…`）；輸出 ODT 時會轉成 LibreOffice 相容的 CJK 編號格式。`display_levels=2` 於第二層會產出串接標籤，如 `1.1.`。
 
 ### `BulletListStyle`
 

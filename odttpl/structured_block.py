@@ -67,6 +67,8 @@ class LevelSpec:
       * ``"1"`` — arabic numerals
       * ``"a"`` / ``"A"`` — lower / upper alpha
       * ``"i"`` / ``"I"`` — lower / upper roman
+      * ``"一"`` — Chinese numerals, emitted as ``"一, 二, 三, ..."``
+        for LibreOffice compatibility
       * ``""`` — no numbering (plain indent)
 
     ``display_levels`` controls how many parent levels are concatenated into the
@@ -116,10 +118,17 @@ class NumberedListStyle:
         return "".join(parts)
 
     @staticmethod
+    def _normalize_num_format(num_format: str) -> str:
+        if num_format == "一":
+            return "一, 二, 三, ..."
+        return num_format
+
+    @staticmethod
     def _level_xml(level: int, spec: LevelSpec) -> str:
         attrs = [f'text:level="{level}"']
         if spec.format:
-            attrs.append(f'style:num-format="{spec.format}"')
+            num_format = NumberedListStyle._normalize_num_format(spec.format)
+            attrs.append(f'style:num-format="{escape(num_format, quote=True)}"')
         else:
             attrs.append('style:num-format=""')
         if spec.prefix:
