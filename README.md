@@ -276,6 +276,117 @@ tpl.save("output.odt")
 
 ---
 
+## StructuredBlock — Programmatic Paragraphs + Nested Lists
+
+Some outputs mix free paragraphs, multi-level numbered/bullet lists, and continuation paragraphs inside list items in ways that static templates (and `{%li %}` loops) cannot express cleanly. `StructuredBlock` is a Python-side builder: you declare the structure in code, render it once, and drop the result into a `{{block VAR}}` placeholder in the template.
+
+### Basic example — mixed paragraph and nested list
+
+**Template** (`report.odt` body):
+
+```xml
+<text:p>Report:</text:p>
+<text:p>{{block content}}</text:p>
+<text:p>— end —</text:p>
+```
+
+The `{{block VAR}}` shorthand strips the surrounding `<text:p>` placeholder before the builder's XML is inserted — so the block can emit its own mix of `<text:p>` and `<text:list>` siblings.
+
+**Python:**
+
+```python
+from odttpl import OdtTemplate, StructuredBlock
+
+tpl = OdtTemplate("report.odt")
+block = StructuredBlock(tpl)
+block.add_paragraph("Findings:")
+block.add_list_item("Authentication", level=1)
+block.add_list_item("Password reset broken", level=2)
+block.add_paragraph("Affects SSO and local accounts.", in_list_item=True)
+block.add_list_item("Session pinning", level=2)
+block.add_list_item("Authorization", level=1)
+
+tpl.render({"content": block})
+tpl.save("out.odt")
+```
+
+`add_paragraph(..., in_list_item=True)` attaches a continuation paragraph to the currently-open list item (rendered as a second `<text:p>` inside the same `<text:list-item>`). Calling `add_paragraph` without `in_list_item=True` closes any open list context first.
+
+### Custom `NumberedListStyle`
+
+If you do not pass a `list_style`, the block auto-registers a 5-level `1./1.1./1.1.1.` style named `odttpl_L{n}`. To customize:
+
+```python
+from odttpl import StructuredBlock, NumberedListStyle, LevelSpec
+
+numbering = NumberedListStyle(
+    tpl,
+    levels=[
+        LevelSpec(format="A", suffix=")"),      # A) B) C) …
+        LevelSpec(format="1", suffix=".",       # 1. 2. 3. …
+                  display_levels=1),
+    ],
+)
+block = StructuredBlock(tpl, default_list_style=numbering)
+```
+
+`LevelSpec.format` accepts ODF `style:num-format` values (`"1"`, `"a"`, `"A"`, `"i"`, `"I"`, or `""`). `display_levels=2` at level 2 produces concatenated labels like `1.1.`.
+
+### `BulletListStyle`
+
+For bullet lists, use `BulletListStyle`. Accepts either `BulletLevelSpec` instances, dicts, or bare bullet characters:
+
+```python
+from odttpl import StructuredBlock, BulletListStyle, BulletLevelSpec
+
+bullets = BulletListStyle(tpl, levels=["•", "◦", "▪"])
+# or: BulletListStyle(tpl, levels=[BulletLevelSpec(bullet_char="•", space_before="1cm")])
+
+block = StructuredBlock(tpl, default_list_style=bullets)
+block.add_list_item("one", level=1)
+block.add_list_item("one-a", level=2)
+```
+
+### Using a named list style already defined in the template
+
+If your `.odt` already defines the list style you want, pass its name as a string — no auto-registration happens:
+
+```python
+block = StructuredBlock(tpl, default_list_style="MyTemplateListStyle")
+```
+
+### Paragraph indent
+
+`add_paragraph` accepts `margin_left` and `text_indent` as ODF length strings (`"2cm"`, `"-0.5cm"`). A paragraph automatic style is generated and injected into `<office:automatic-styles>`. If `parastyle=` is also set, the explicit name wins and indents are ignored:
+
+```python
+block.add_paragraph("Indented note", margin_left="2cm", text_indent="-0.5cm")
+```
+
+### `RichText` inside a block
+
+`add_paragraph` and `add_list_item` accept either `str` or `RichText`. Character styles registered by `RichText` are injected into the document as usual:
+
+```python
+from odttpl import RichText
+block.add_list_item(RichText(tpl, "CRITICAL", bold=True, color="#CC0000"))
+```
+
+### Coexists with `{%li %}` loops
+
+A single template may mix `{{block VAR}}` and `{%li for … %}` — they do not interfere.
+
+### Validation
+
+`StructuredBlock` raises `StructuredBlockError` for:
+- `level < 1`
+- jumping levels (e.g. level 1 → level 3 without an intervening level 2)
+- `add_paragraph(in_list_item=True)` with no open list item
+
+Rendered XML is still run through `_check_well_formed`, so any structural breakage surfaces as a descriptive `ValueError`.
+
+---
+
 ## Advanced Usage
 
 ### Autoescape

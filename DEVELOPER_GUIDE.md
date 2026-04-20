@@ -44,7 +44,8 @@ python-odt-template/
 │   ├── richtext.py        # 行內文字格式化
 │   ├── listing.py         # 多行文字處理
 │   ├── inline_image.py    # 圖片嵌入
-│   └── subdoc.py          # 子文件合併
+│   ├── subdoc.py          # 子文件合併
+│   └── structured_block.py # 程式化段落＋巢狀清單 builder
 ├── tests/
 │   ├── test_template.py   # 功能測試
 │   ├── make_templates.py  # 測試用 ODT 產生器
@@ -70,7 +71,9 @@ python-odt-template/
 |------|------|------|
 | `_template_data` | `bytes` | 原始 ZIP 的記憶體快取，支援多次渲染 |
 | `_modified_files` | `dict[str, bytes]` | 渲染後被修改的 XML 檔案 |
-| `_auto_styles` | `dict` | 自動樣式登錄表（key: props tuple → value: style 名稱） |
+| `_auto_styles` | `dict` | 字元自動樣式登錄表（key: props frozenset → value: `odttpl_T{n}`） |
+| `_list_styles` | `dict` | 清單自動樣式登錄表（key: style name → value: `NumberedListStyle` / `BulletListStyle`） |
+| `_para_styles` | `dict` | 段落自動樣式登錄表（key: props frozenset → value: `odttpl_P{n}`） |
 | `_extra_images` | `dict` | 需要寫入 ZIP 的額外圖片 |
 | `_subdocs` | `list` | 本次渲染中用到的所有 OdtSubdoc |
 | `_subdoc_counter` | `int` | 用來給 subdoc 分配唯一前綴 |
@@ -86,8 +89,10 @@ python-odt-template/
 | `render_xml_part(xml, context)` | 執行 Jinja2 渲染並做後處理 |
 | `resolve_listing(xml)` | 將 `\n\t\a\f` 展開為 ODF XML 元素 |
 | `_merge_consecutive_lists(xml)` | 修正迴圈展開後產生的多餘 `<text:list>` |
-| `_inject_auto_styles(xml)` | 將 RichText 樣式定義注入 XML |
-| `_register_text_style(**props)` | 登錄一個文字樣式，回傳樣式名稱 |
+| `_inject_auto_styles(xml)` | 將字元、段落、清單三種自動樣式一併注入 `<office:automatic-styles>` |
+| `_register_text_style(**props)` | 登錄一個字元樣式，回傳 `odttpl_T{n}` |
+| `_register_para_style(**props)` | 登錄一個段落樣式（`margin_left` / `text_indent`），回傳 `odttpl_P{n}` |
+| `_register_list_style(style)` | 登錄一份 `NumberedListStyle` / `BulletListStyle`，回傳其 `.name` |
 | `_add_image(image)` | 將 InlineImage 登記至 `_extra_images` |
 | `new_subdoc(path)` | 建立 OdtSubdoc 實例 |
 | `get_undeclared_variables()` | 分析範本，回傳所有未宣告變數 |
@@ -101,8 +106,9 @@ python-odt-template/
 | `{%p`  / `{{p`  | `<text:p>` |
 | `{%s`  / `{{s`  | `<text:span>` |
 | `{%li` / `{{li` | `<text:list-item>` |
+| `{{block` | `<text:p>`（專供 `StructuredBlock` 佔位，剝除外層段落後插入混合 XML） |
 
-> 只有 tr / tc / p 這三者另外支援 `{#y …#}` 的註解形式 shorthand（由 `_TAG_MAP[:3]` 的迴圈處理）；s / li 不在此註解 shorthand 範圍內。
+> 只有 tr / tc / p 這三者另外支援 `{#y …#}` 的註解形式 shorthand（由 `_TAG_MAP[:3]` 的迴圈處理）；s / li / block 不在此註解 shorthand 範圍內。
 
 ---
 
@@ -208,6 +214,55 @@ context = {"chapter": subdoc}
 
 ---
 
+### 3.6 `structured_block.py` — 程式化段落＋巢狀清單 builder
+
+**公開 API**：`StructuredBlock`（別名 `SB`）、`NumberedListStyle`（別名 `NLS`）、`BulletListStyle`、`LevelSpec`、`BulletLevelSpec`、`StructuredBlockError`。
+
+**定位**：補足 `{%li %}` 迴圈難以表達的情境 — 文件結構（段落 / 清單層級 / 清單項目內的延伸段落）由 Python 端邏輯決定，而非靜態範本形狀。
+
+**典型使用**：
+
+```python
+block = StructuredBlock(tpl)
+block.add_paragraph("Findings:")
+block.add_list_item("Severity high", level=1)
+block.add_paragraph("Affected services: A, B", in_list_item=True)
+block.add_list_item("Auth service", level=2)
+context = {"content": block}
+```
+
+範本中以 `{{block content}}` 佔位，`_TAG_MAP` 會剝除外層 `<text:p>` 後插入 block 的 XML。
+
+**AST 節點**：
+
+| 節點 | 用途 |
+|------|------|
+| `ParagraphNode` | 一個獨立段落（或清單項目內的延伸段落） |
+| `ListItemNode` | 一個清單項目，攜帶 `continuation`（延伸段落）與 `nested`（子層 `_ListGroup`） |
+| `_ListGroup` | 內部：同層級、同樣式的連續 `ListItemNode` 群組 |
+
+**Builder 狀態**：
+- `_nodes: list[ParagraphNode | _ListGroup]` — 最終頂層序列
+- `_list_stack: list[_ListGroup]` — 目前開啟的各層清單（index+1 = level）
+- `_current_item: ListItemNode | None` — 目前可接受 `in_list_item=True` 延伸段落的項目
+- `_referenced_styles: list[NumberedListStyle | BulletListStyle]` — 本 block 引用過的清單樣式
+- `_default_style_obj: NumberedListStyle | None` — 未指定樣式時 lazy 產出的預設 1./1.1./1.1.1. 樣式
+
+**樣式登錄策略**：`_build()` 被呼叫時會遍歷 `_referenced_styles` 並呼叫 `tpl._register_list_style(...)` — 這是為了在每次 `render()` 清空 `_list_styles` 之後仍能重新註冊（RichText 的 lazy registration 同一思路）。`_render_paragraph` 若未給 `parastyle` 但有 `margin_left` / `text_indent`，會呼叫 `tpl._register_para_style(...)` 取得 `odttpl_P{n}`。
+
+**渲染**：字串組裝而非 lxml（與 `RichText` 一致），最終由 `_check_well_formed` 一次驗證。每個頂層 `<text:list>` 會加上 `text:continue-numbering="false"`，避免 `_merge_consecutive_lists` 將不同 block 的清單誤合併而延續編號。
+
+**`NumberedListStyle` / `BulletListStyle`**：
+- 建構時就呼叫 `tpl._register_list_style(self)`（立即登錄、名稱可自帶或由 `tpl._next_list_style_name()` 產生）。
+- 各自以 `.xml` property 生成 `<text:list-style>…</text:list-style>`，前者用 `<text:list-level-style-number>`、後者用 `<text:list-level-style-bullet>`。
+- `BulletListStyle.levels` 接受 `BulletLevelSpec` / `dict` / 純字串（單字元 bullet）三種寫法。
+
+**嚴格檢查**：`add_list_item` 對 `level<1`、跳級 (`level > 目前深度+1`) 皆拋 `StructuredBlockError`；`add_paragraph(in_list_item=True)` 於無開啟項目時同樣拋出。
+
+**與 `{%li %}` 共存**：兩者在 `patch_xml` 走不同分支（`block` 剝除整個 `<text:p>`、`li` 剝除整個 `<text:list-item>` 並保留 start-value restart marker），互不干擾；同一份範本可混用。
+
+---
+
 ## 4. 核心資料流
 
 以下展示一次完整的 `render()` + `save()` 的執行路徑：
@@ -309,15 +364,15 @@ save(output)
 
 ### 5.3 自動樣式登錄（Registry Pattern）
 
-`RichText` 使用的格式屬性會以 tuple 作為 key 進行去重：
+共有三種自動樣式 registry，統一由 `_inject_auto_styles` 插入 `<office:automatic-styles>`：
 
-```python
-# _auto_styles: dict[tuple, str]
-# key: (("bold", True), ("color", "#FF0000"))
-# value: "odttpl_T1"
-```
+| Registry | 來源 | Key | 產生名稱 | 對應樣式 family |
+|----------|------|-----|-----------|-----------------|
+| `_auto_styles` | `RichText._build()` → `_register_text_style(**props)` | `frozenset(props)` | `odttpl_T{n}` | `text` |
+| `_para_styles` | `StructuredBlock._render_paragraph()` → `_register_para_style(**props)` | `frozenset(props)` | `odttpl_P{n}` | `paragraph` |
+| `_list_styles` | `NumberedListStyle` / `BulletListStyle.__init__` → `_register_list_style(style)` | `style.name`（即樣式名） | 建構時指定或 `odttpl_L{n}` | 獨立 `<text:list-style>` |
 
-相同格式只會產生一個樣式定義，節省檔案大小。
+相同屬性組合只產生一份樣式定義，節省檔案大小、避免命名爆炸。每次 `render()` 三個 registry 都會一併清空，下次渲染重新登錄（`RichText`、`StructuredBlock` 各自以 lazy re-register 邏輯處理跨 render 重用）。
 
 ---
 
@@ -358,9 +413,11 @@ def render(self, context, ...):
     # 每次 render 開始時重置所有可變狀態
     self._modified_files = {}
     self._auto_styles = {}
+    self._list_styles = {}
+    self._para_styles = {}
     self._extra_images = {}
-    self._subdocs = []
-    self._subdoc_counter = 0
+    self._subdoc_list = []
+    self._subdoc_counter = 1
     # ...
 ```
 

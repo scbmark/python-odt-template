@@ -276,6 +276,117 @@ tpl.save("output.odt")
 
 ---
 
+## StructuredBlock — 以 Python 組出段落＋巢狀清單
+
+當輸出需要混合自由段落、多層編號／項目符號清單、以及插在清單項目中間的補充段落時，靜態範本（即使搭配 `{%li %}` 迴圈）常難以表達。`StructuredBlock` 是一組 Python 端的 builder：你在程式中宣告完整結構，一次渲染後，再填入範本中的 `{{block VAR}}` 佔位符。
+
+### 基本範例 — 混合段落與巢狀清單
+
+**範本**（`report.odt` 內容）：
+
+```xml
+<text:p>報告：</text:p>
+<text:p>{{block content}}</text:p>
+<text:p>— 結束 —</text:p>
+```
+
+`{{block VAR}}` 快捷會先剝除外層 `<text:p>` 佔位符，再插入 builder 產出的 XML — 因此 block 本身可以輸出 `<text:p>` 與 `<text:list>` 混合的兄弟節點。
+
+**Python：**
+
+```python
+from odttpl import OdtTemplate, StructuredBlock
+
+tpl = OdtTemplate("report.odt")
+block = StructuredBlock(tpl)
+block.add_paragraph("發現項目：")
+block.add_list_item("身份驗證", level=1)
+block.add_list_item("密碼重設失效", level=2)
+block.add_paragraph("同時影響 SSO 與本地帳號。", in_list_item=True)
+block.add_list_item("Session pinning", level=2)
+block.add_list_item("授權", level=1)
+
+tpl.render({"content": block})
+tpl.save("out.odt")
+```
+
+`add_paragraph(..., in_list_item=True)` 會把該段落作為「延伸段落」附加到目前開啟的清單項目中（輸出為同一 `<text:list-item>` 內的第二個 `<text:p>`）。未帶 `in_list_item=True` 的 `add_paragraph` 則會先關閉當前清單上下文。
+
+### 自訂 `NumberedListStyle`
+
+未指定 `list_style` 時，block 會自動註冊一份 5 層、`1./1.1./1.1.1.` 的編號樣式，名稱為 `odttpl_L{n}`。若要自訂：
+
+```python
+from odttpl import StructuredBlock, NumberedListStyle, LevelSpec
+
+numbering = NumberedListStyle(
+    tpl,
+    levels=[
+        LevelSpec(format="A", suffix=")"),      # A) B) C) …
+        LevelSpec(format="1", suffix=".",       # 1. 2. 3. …
+                  display_levels=1),
+    ],
+)
+block = StructuredBlock(tpl, default_list_style=numbering)
+```
+
+`LevelSpec.format` 接受 ODF 的 `style:num-format`（`"1"`、`"a"`、`"A"`、`"i"`、`"I"`、或 `""`）。`display_levels=2` 於第二層會產出串接標籤，如 `1.1.`。
+
+### `BulletListStyle`
+
+項目符號清單用 `BulletListStyle`。可接受 `BulletLevelSpec`、dict、或純符號字串：
+
+```python
+from odttpl import StructuredBlock, BulletListStyle, BulletLevelSpec
+
+bullets = BulletListStyle(tpl, levels=["•", "◦", "▪"])
+# 或：BulletListStyle(tpl, levels=[BulletLevelSpec(bullet_char="•", space_before="1cm")])
+
+block = StructuredBlock(tpl, default_list_style=bullets)
+block.add_list_item("one", level=1)
+block.add_list_item("one-a", level=2)
+```
+
+### 使用範本中既有的具名清單樣式
+
+若 `.odt` 中已定義好所需的清單樣式，直接以字串傳入，不會另外註冊：
+
+```python
+block = StructuredBlock(tpl, default_list_style="MyTemplateListStyle")
+```
+
+### 段落縮排
+
+`add_paragraph` 接受 `margin_left` 與 `text_indent`（ODF 長度字串如 `"2cm"`、`"-0.5cm"`）。系統會自動產生段落自動樣式並注入 `<office:automatic-styles>`。若同時指定 `parastyle=`，以 `parastyle` 為準、忽略縮排參數：
+
+```python
+block.add_paragraph("縮排備註", margin_left="2cm", text_indent="-0.5cm")
+```
+
+### 在 block 中使用 `RichText`
+
+`add_paragraph` 與 `add_list_item` 皆接受 `str` 或 `RichText`。`RichText` 註冊的字元樣式會照常注入：
+
+```python
+from odttpl import RichText
+block.add_list_item(RichText(tpl, "CRITICAL", bold=True, color="#CC0000"))
+```
+
+### 與 `{%li %}` 迴圈並存
+
+同一份範本可混用 `{{block VAR}}` 與 `{%li for … %}`，互不干擾。
+
+### 驗證
+
+`StructuredBlock` 會在下列情況丟出 `StructuredBlockError`：
+- `level < 1`
+- 跳級（例如 level 1 直接跳到 level 3、缺了中間的 level 2）
+- 在無開啟清單項目時呼叫 `add_paragraph(in_list_item=True)`
+
+渲染後的 XML 仍會經過 `_check_well_formed`，結構錯誤會以描述清楚的 `ValueError` 拋出。
+
+---
+
 ## 進階用法
 
 ### 自動跳脫（autoescape）
