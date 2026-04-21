@@ -288,6 +288,7 @@ class OdtTemplate:
         # Insert newlines before <text:p> so that Jinja2 line numbers are
         # useful for error reporting.
         src_xml = re.sub(r"<text:p([ >])", r"\n<text:p\1", src_xml)
+        src_xml = self._mark_loop_iterations(src_xml)
         try:
             if jinja_env:
                 template = jinja_env.from_string(src_xml)
@@ -313,6 +314,7 @@ class OdtTemplate:
             .replace("%_}", "%}")
         )
         dst_xml = self.resolve_listing(dst_xml)
+        dst_xml = self._continue_numbering_in_loop_lists(dst_xml)
         dst_xml = self._merge_consecutive_lists(dst_xml)
         dst_xml = self._remove_orphaned_close_spans(dst_xml)
         return dst_xml
@@ -322,6 +324,171 @@ class OdtTemplate:
     # ------------------------------------------------------------------
 
     _LI_RESTART_MARKER = "__ODTTPL_LIST_RESTART__"
+    _LOOP_START_MARKER = "ODTTPL_LOOP_START"
+    _LOOP_END_MARKER = "ODTTPL_LOOP_END"
+    _LOOP_TAG_RE = re.compile(
+        r"({%-?\s*for\b(?:(?!%}).)*-?%}|{%-?\s*endfor\s*-?%})",
+        re.DOTALL,
+    )
+    _LOOP_MARKER_RE = re.compile(r"<!--ODTTPL_LOOP_(START|END):(\d+)-->")
+    _LIST_OPEN_RE = re.compile(r"<text:list\b(?:\s[^>]*)?>", re.DOTALL)
+    _LIST_STYLE_RE = re.compile(r'\btext:style-name="([^"]*)"')
+
+    @classmethod
+    def _mark_loop_iterations(cls, xml: str) -> str:
+        """Insert XML comments that bound each rendered Jinja for-loop body."""
+        loop_stack: list[str] = []
+        loop_counter = 0
+        parts: list[str] = []
+        pos = 0
+
+        for match in cls._LOOP_TAG_RE.finditer(xml):
+            tag = match.group(0)
+            parts.append(xml[pos : match.start()])
+            if re.match(r"{%-?\s*for\b", tag):
+                loop_counter += 1
+                loop_id = str(loop_counter)
+                loop_stack.append(loop_id)
+                parts.append(tag)
+                parts.append(f"<!--{cls._LOOP_START_MARKER}:{loop_id}-->")
+            elif loop_stack:
+                loop_id = loop_stack.pop()
+                parts.append(f"<!--{cls._LOOP_END_MARKER}:{loop_id}-->")
+                parts.append(tag)
+            else:
+                parts.append(tag)
+            pos = match.end()
+
+        parts.append(xml[pos:])
+        return "".join(parts)
+
+    @classmethod
+    def _continue_numbering_in_loop_lists(cls, xml: str) -> str:
+        """Add continue-numbering to repeated same-style lists inside loops."""
+        if "ODTTPL_LOOP_" not in xml:
+            return xml
+
+        active_loops: list[str] = []
+        seen_styles_by_loop: dict[str, set[str]] = {}
+        parts: list[str] = []
+        pos = 0
+
+        for match in cls._LOOP_MARKER_RE.finditer(xml):
+            parts.append(
+                cls._continue_numbering_in_active_loop(
+                    xml[pos : match.start()],
+                    active_loops,
+                    seen_styles_by_loop,
+                )
+            )
+            marker_kind, loop_id = match.groups()
+            if marker_kind == "START":
+                active_loops.append(loop_id)
+                seen_styles_by_loop.setdefault(loop_id, set())
+            elif active_loops and active_loops[-1] == loop_id:
+                active_loops.pop()
+            elif loop_id in active_loops:
+                active_loops.remove(loop_id)
+            pos = match.end()
+
+        parts.append(
+            cls._continue_numbering_in_active_loop(
+                xml[pos:],
+                active_loops,
+                seen_styles_by_loop,
+            )
+        )
+        return "".join(parts)
+
+    @classmethod
+    def _continue_numbering_in_active_loop(
+        cls,
+        xml: str,
+        active_loops: list[str],
+        seen_styles_by_loop: dict[str, set[str]],
+    ) -> str:
+        if not active_loops or "<text:list" not in xml:
+            return xml
+        loop_id = active_loops[-1]
+        seen_styles = seen_styles_by_loop.setdefault(loop_id, set())
+        return cls._continue_numbering_in_list_fragment(xml, seen_styles)
+
+    @classmethod
+    def _continue_numbering_in_list_fragment(
+        cls,
+        xml: str,
+        seen_styles: set[str],
+    ) -> str:
+        tokens = re.split(r"(<text:list\b(?:\s[^>]*)?>|</text:list>)", xml)
+        parts: list[str] = []
+        list_parts: list[str] = []
+        depth = 0
+
+        for token in tokens:
+            if cls._LIST_OPEN_RE.fullmatch(token):
+                if depth == 0:
+                    list_parts = [token]
+                else:
+                    list_parts.append(token)
+                depth += 1
+            elif token == "</text:list>" and depth > 0:
+                depth -= 1
+                list_parts.append(token)
+                if depth == 0:
+                    parts.append(
+                        cls._continue_numbering_in_list_block(
+                            "".join(list_parts),
+                            seen_styles,
+                        )
+                    )
+                    list_parts = []
+            elif depth > 0:
+                list_parts.append(token)
+            else:
+                parts.append(token)
+
+        if list_parts:
+            parts.extend(list_parts)
+        return "".join(parts)
+
+    @classmethod
+    def _continue_numbering_in_list_block(
+        cls,
+        list_xml: str,
+        seen_styles: set[str],
+    ) -> str:
+        open_match = cls._LIST_OPEN_RE.match(list_xml)
+        if not open_match:
+            return list_xml
+
+        open_tag = open_match.group(0)
+        style_match = cls._LIST_STYLE_RE.search(open_tag)
+        style = style_match.group(1) if style_match else ""
+        style_was_seen = style in seen_styles
+        seen_styles.add(style)
+
+        if (
+            not style_was_seen
+            or "text:continue-numbering=" in open_tag
+            or cls._list_has_restart_intent(open_tag, list_xml)
+        ):
+            return list_xml
+
+        continued_open_tag = open_tag.replace(
+            "<text:list",
+            '<text:list text:continue-numbering="true"',
+            1,
+        )
+        return continued_open_tag + list_xml[open_match.end() :]
+
+    @staticmethod
+    def _list_has_restart_intent(open_tag: str, list_xml: str) -> bool:
+        if "text:start-value=" in open_tag:
+            return True
+        if re.search(r'\btext:continue-numbering="(?:false|0)"', open_tag):
+            return True
+        first_item = re.search(r"<text:list-item\b[^>]*>", list_xml)
+        return bool(first_item and "text:start-value=" in first_item.group(0))
 
     @classmethod
     def _apply_list_restart_markers(cls, xml: str) -> str:

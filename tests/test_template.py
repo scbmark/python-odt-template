@@ -9,6 +9,7 @@ Run with::
 
 import io
 import os
+import re
 import zipfile
 
 from odttpl import OdtTemplate, Listing, RichText, OdtSubdoc
@@ -193,6 +194,104 @@ def test_multi_render():
     assert "First" in _content_xml(buf1.getvalue())
     assert "Second" in _content_xml(buf2.getvalue())
     assert "First" not in _content_xml(buf2.getvalue())
+
+
+# ---------------------------------------------------------------------------
+# List numbering across loop-expanded list groups
+# ---------------------------------------------------------------------------
+
+
+def _wwnum1_list_open_tags(xml: str) -> list[str]:
+    return re.findall(r'<text:list\b[^>]*text:style-name="WWNum1"[^>]*>', xml)
+
+
+def test_loop_lists_continue_numbering_after_first_list(tmp_path):
+    body = """\
+      <text:p>{%p for image in images %}</text:p>
+      <text:list text:style-name="WWNum1">
+        <text:list-item><text:p>{{ image.img1.content }}</text:p></text:list-item>
+      </text:list>
+      <text:p>between</text:p>
+      <text:list text:style-name="WWNum1">
+        <text:list-item><text:p>{{ image.img2.content }}</text:p></text:list-item>
+      </text:list>
+      <text:p>page break placeholder</text:p>
+      <text:p>{%p endfor %}</text:p>"""
+    template = _make_odt_file(tmp_path, "loop_lists.odt", body)
+
+    tpl = OdtTemplate(template)
+    tpl.render(
+        {
+            "images": [
+                {"img1": {"content": "one"}, "img2": {"content": "two"}},
+                {"img1": {"content": "three"}, "img2": {"content": "four"}},
+            ]
+        }
+    )
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    tags = _wwnum1_list_open_tags(xml)
+
+    assert len(tags) == 4
+    assert 'text:continue-numbering="true"' not in tags[0]
+    assert all('text:continue-numbering="true"' in tag for tag in tags[1:])
+    assert "ODTTPL_LOOP" not in xml
+
+
+def test_loop_list_continuation_does_not_affect_lists_outside_loop(tmp_path):
+    body = """\
+      <text:list text:style-name="WWNum1">
+        <text:list-item><text:p>outside before</text:p></text:list-item>
+      </text:list>
+      <text:p>outside before separator</text:p>
+      <text:p>{%p for item in items %}</text:p>
+      <text:list text:style-name="WWNum1">
+        <text:list-item><text:p>{{ item }}</text:p></text:list-item>
+      </text:list>
+      <text:p>inside separator</text:p>
+      <text:p>{%p endfor %}</text:p>
+      <text:p>outside after separator</text:p>
+      <text:list text:style-name="WWNum1">
+        <text:list-item><text:p>outside after</text:p></text:list-item>
+      </text:list>"""
+    template = _make_odt_file(tmp_path, "loop_lists_with_outside.odt", body)
+
+    tpl = OdtTemplate(template)
+    tpl.render({"items": ["one", "two"]})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    tags = _wwnum1_list_open_tags(xml)
+
+    assert len(tags) == 4
+    assert 'text:continue-numbering="true"' not in tags[0]
+    assert 'text:continue-numbering="true"' not in tags[1]
+    assert 'text:continue-numbering="true"' in tags[2]
+    assert 'text:continue-numbering="true"' not in tags[3]
+    assert "ODTTPL_LOOP" not in xml
+
+
+def test_loop_list_continuation_preserves_restart_intent(tmp_path):
+    body = """\
+      <text:p>{%p for item in items %}</text:p>
+      <text:list text:style-name="WWNum1">
+        <text:list-item text:start-value="4"><text:p>{{ item }}</text:p></text:list-item>
+      </text:list>
+      <text:p>between</text:p>
+      <text:p>{%p endfor %}</text:p>"""
+    template = _make_odt_file(tmp_path, "loop_lists_restart_intent.odt", body)
+
+    tpl = OdtTemplate(template)
+    tpl.render({"items": ["one", "two"]})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    tags = _wwnum1_list_open_tags(xml)
+
+    assert len(tags) == 2
+    assert all('text:continue-numbering="true"' not in tag for tag in tags)
+    assert 'text:start-value="4"' in xml
 
 
 # ---------------------------------------------------------------------------
