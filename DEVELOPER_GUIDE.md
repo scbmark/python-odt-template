@@ -1,556 +1,513 @@
 # odttpl 開發者指南
 
-本文件說明 `odttpl` 套件的整體架構與設計思路，供後續維護參考。
+這份文件說明 `odttpl` 目前的實作模型、渲染流程與測試基線，內容以 2026-04-21 當下專案中的程式碼與既有測試為準。
 
----
+## 專案概述
 
-## 目錄
+`odttpl` 把 ODF 文件當成 Jinja2 template 來處理。以最常見的 `.odt` 為例，實際流程是：
 
-1. [專案概述](#1-專案概述)
-2. [目錄結構](#2-目錄結構)
-3. [模組說明](#3-模組說明)
-4. [核心資料流](#4-核心資料流)
-5. [關鍵演算法](#5-關鍵演算法)
-6. [狀態管理](#6-狀態管理)
-7. [測試架構](#7-測試架構)
-8. [擴充指引](#8-擴充指引)
-9. [已知限制與 Trade-offs](#9-已知限制與-trade-offs)
+1. 讀取 ODT ZIP 內的 `content.xml`
+2. 將 LibreOffice 拆碎的 Jinja 標籤重新修補
+3. 用 Jinja2 以 Python context 渲染 XML
+4. 注入渲染期間動態產生的樣式、圖片與 subdoc 內容
+5. 把修改過的 XML 與新增資源寫回新的 ODT ZIP
 
----
+目前文件與測試主要聚焦在 `.odt` 用法，但核心設計是 ODF XML 層級的 template engine。
 
-## 1. 專案概述
+## 目錄結構
 
-**odttpl** 讓使用者以 LibreOffice 製作 `.odt` 範本，再透過 Jinja2 語法填入變數，產生最終文件。設計上參考 `python-docx-template` 的 API，但針對 ODF 格式重新實作。
-
-**技術核心**：`.odt` 本質上是一個 ZIP 壓縮檔，內含多個 XML 檔案。本套件的工作就是：
-
-```
-讀取 ZIP → 修補 XML → Jinja2 渲染 → 後處理 → 寫回 ZIP
-```
-
-**依賴套件**：
-- `jinja2`：範本渲染引擎
-- `lxml`：XML 解析（用於樣式注入與 subdoc 合併）
-
----
-
-## 2. 目錄結構
-
-```
+```text
 python-odt-template/
-├── odttpl/
-│   ├── __init__.py        # 公開 API 匯出
-│   ├── template.py        # 核心引擎 OdtTemplate
-│   ├── richtext.py        # 行內文字格式化
-│   ├── listing.py         # 多行文字處理
-│   ├── inline_image.py    # 圖片嵌入
-│   ├── subdoc.py          # 子文件合併
-│   └── structured_block.py # 程式化段落＋巢狀清單 builder
-├── tests/
-│   ├── test_template.py   # 功能測試
-│   ├── make_templates.py  # 測試用 ODT 產生器
-│   └── templates/         # 測試用 ODT 檔（由 make_templates.py 產生）
-├── pyproject.toml
-├── README.md / README.zh.md
-└── CLAUDE.md
+├─ odttpl/
+│  ├─ __init__.py
+│  ├─ template.py
+│  ├─ richtext.py
+│  ├─ listing.py
+│  ├─ inline_image.py
+│  ├─ subdoc.py
+│  └─ structured_block.py
+├─ tests/
+│  ├─ test_template.py
+│  ├─ test_structured_block.py
+│  ├─ make_templates.py
+│  └─ templates/
+├─ README.md
+├─ README.zh-TW.md
+└─ pyproject.toml
 ```
 
----
+模組分工：
 
-## 3. 模組說明
+- `template.py`：核心 `OdtTemplate`、XML patching、render/save、style/image/subdoc 注入
+- `richtext.py`：`RichText`、`RichTextParagraph` 與行內/段落格式產生
+- `listing.py`：多行文字與控制字元轉 ODF XML
+- `inline_image.py`：圖片封裝與 `<draw:frame>` XML 產生
+- `subdoc.py`：子文件 body、auto styles、圖片合併
+- `structured_block.py`：以 Python builder 組出混合段落與巢狀清單
 
-### 3.1 `template.py` — 核心引擎
+## 核心公開 API
 
-**類別**：`OdtTemplate`
+`odttpl.__init__` 目前匯出的主要 API 如下：
 
-這是整個套件的主體，負責協調所有流程。
+- `OdtTemplate`
+- `RichText`, `RichTextParagraph`, `R`, `RP`
+- `Listing`
+- `InlineImage`
+- `OdtSubdoc`
+- `StructuredBlock`, `SB`
+- `NumberedListStyle`, `BulletListStyle`, `NLS`
+- `LevelSpec`, `BulletLevelSpec`, `LabelFollowedBy`
+- `StructuredBlockError`
 
-**重要屬性（`__init__` 初始化）**：
+## `template.py`：核心引擎
 
-| 屬性 | 型別 | 用途 |
-|------|------|------|
-| `_template_data` | `bytes` | 原始 ZIP 的記憶體快取，支援多次渲染 |
-| `_modified_files` | `dict[str, bytes]` | 渲染後被修改的 XML 檔案 |
-| `_auto_styles` | `dict` | 字元自動樣式登錄表（key: props frozenset → value: `odttpl_T{n}`） |
-| `_list_styles` | `dict` | 清單自動樣式登錄表（key: style name → value: `NumberedListStyle` / `BulletListStyle`） |
-| `_para_styles` | `dict` | 段落自動樣式登錄表（key: props frozenset → value: `odttpl_P{n}`） |
-| `_extra_images` | `dict` | 需要寫入 ZIP 的額外圖片 |
-| `_subdocs` | `list` | 本次渲染中用到的所有 OdtSubdoc |
-| `_subdoc_counter` | `int` | 用來給 subdoc 分配唯一前綴 |
+### `OdtTemplate`
 
-**重要方法**：
-
-| 方法 | 說明 |
-|------|------|
-| `render(context, ...)` | 主流程入口，協調所有步驟 |
-| `save(output)` | 將渲染結果寫出為 ZIP |
-| `patch_xml(xml)` | 修補 LibreOffice 切碎 Jinja2 標籤的問題（見第 5 節） |
-| `_check_well_formed(xml, part_name)` | 渲染後以 lxml parse 驗證 XML；失敗時拋 `ValueError` 並提示 shorthand（見第 5.4 節） |
-| `render_xml_part(xml, context)` | 執行 Jinja2 渲染並做後處理 |
-| `resolve_listing(xml)` | 將 `\n\t\a\f` 展開為 ODF XML 元素 |
-| `_merge_consecutive_lists(xml)` | 修正迴圈展開後產生的多餘 `<text:list>` |
-| `_inject_auto_styles(xml)` | 將字元、段落、清單三種自動樣式一併注入 `<office:automatic-styles>` |
-| `_register_text_style(**props)` | 登錄一個字元樣式，回傳 `odttpl_T{n}` |
-| `_register_para_style(**props)` | 登錄一個段落樣式（`margin_left` / `text_indent`），回傳 `odttpl_P{n}` |
-| `_register_list_style(style)` | 登錄一份 `NumberedListStyle` / `BulletListStyle`，回傳其 `.name` |
-| `_add_image(image)` | 將 InlineImage 登記至 `_extra_images` |
-| `new_subdoc(path)` | 建立 OdtSubdoc 實例 |
-| `get_undeclared_variables()` | 分析範本，回傳所有未宣告變數 |
-
-**元素級 shorthand 對照（`_TAG_MAP`）**：`patch_xml` 會把包裹 shorthand Jinja tag 的整個 ODF 元素替換為純 Jinja tag，讓迴圈展開時能產生一組完整、對稱的元素。
-
-| shorthand | 對應 ODF 元素 |
-|-----------|---------------|
-| `{%tr` / `{{tr` | `<table:table-row>` |
-| `{%tc` / `{{tc` | `<table:table-cell>` |
-| `{%p`  / `{{p`  | `<text:p>` |
-| `{%s`  / `{{s`  | `<text:span>` |
-| `{%li` / `{{li` | `<text:list-item>` |
-| `{{block` | `<text:p>`（專供 `StructuredBlock` 佔位，剝除外層段落後插入混合 XML） |
-
-> 只有 tr / tc / p 這三者另外支援 `{#y …#}` 的註解形式 shorthand（由 `_TAG_MAP[:3]` 的迴圈處理）；s / li / block 不在此註解 shorthand 範圍內。
-
----
-
-### 3.2 `richtext.py` — 行內格式化
-
-**類別**：`RichText`（別名 `R`）
-
-用來在 Jinja2 context 中傳入帶有格式的文字片段。
-
-**使用流程**：
+建構子：
 
 ```python
-rt = RichText()
-rt.add("粗體", bold=True)
-rt.add(" 紅色", color="#FF0000")
-context = {"title": rt}
+OdtTemplate(template_file: Union[str, Path, IO[bytes]])
 ```
 
-**內部機制**：
-- 呼叫 `add()` 時，只記錄文字與格式屬性，不產生 XML。
-- Jinja2 渲染時呼叫 `__html__()`（autoescape 模式）或 `__str__()`，此時才呼叫 `_build()`。
-- `_build()` 呼叫 `tpl._register_text_style(**props)` 取得樣式名稱，再產生 `<text:span style-name="...">` XML。
-- 樣式定義由 `OdtTemplate._inject_auto_styles()` 在渲染後注入 content.xml。
+重要狀態：
 
-**延遲建立的原因**：必須在每次 `render()` 重置後才能登錄樣式，確保 `_auto_styles` 是乾淨的。
+- `_template_data`：原始 ZIP bytes，整個 render 週期都以它為 source of truth
+- `_modified_files`：這次 render 需要覆蓋回 ZIP 的檔案內容
+- `_extra_images`：由 `InlineImage` 或 subdoc 合併帶入的額外圖片
+- `_auto_styles`：文字樣式 registry，key 是 style props 的 `frozenset`
+- `_list_styles`：清單樣式 registry，key 是 style name，value 是 `NumberedListStyle` 或 `BulletListStyle`
+- `_para_styles`：段落樣式 registry，用於 `StructuredBlock` 的自動 paragraph styles
+- `_subdoc_list`：本次 render 中實際被引用到的 subdoc
+- `_subdoc_counter`：subdoc 前綴計數器，生成 `odttpl_sd1_...`
 
----
+### 重要方法
 
-**類別**：`RichTextParagraph`（別名 `RP`）
+- `render(context, jinja_env=None, autoescape=False)`
+- `save(output_file)`
+- `patch_xml(src_xml)`
+- `build_content_xml(...)`
+- `build_styles_xml(...)`
+- `render_xml_part(...)`
+- `resolve_listing(...)`
+- `_merge_consecutive_lists(...)`
+- `_inject_auto_styles(...)`
+- `_register_text_style(...)`
+- `_register_list_style(...)`
+- `_register_para_style(...)`
+- `new_subdoc(...)`
+- `get_undeclared_variables(...)`
 
-用來插入帶有段落樣式的文字，對應範本中的 `{{p variable }}` 語法。
+### `patch_xml()` 的角色
 
-```python
-rp = RichTextParagraph("內容", style="Heading_20_1")
-```
+LibreOffice 會把 `{{ name }}` 或 `{% if ... %}` 之類的 Jinja 標籤拆到多個 `<text:span>` 甚至多個 XML node。`patch_xml()` 會先把這些碎片修回 Jinja2 可解析的字串，再交給 render。
 
-會產生 `<text:p text:style-name="Heading_20_1">內容</text:p>`。
+它還會處理 element shorthand：
 
----
+- `{%tr` / `{{tr` -> `<table:table-row>`
+- `{%tc` / `{{tc` -> `<table:table-cell>`
+- `{%p` / `{{p` -> `<text:p>`
+- `{%s` / `{{s` -> `<text:span>`
+- `{%li` / `{{li` -> `<text:list-item>`
+- `{{block` -> `<text:p>` placeholder paragraph
 
-### 3.3 `listing.py` — 多行文字
+`{{block ...}}` 是這次文件更新中特別要注意的點：它和 `StructuredBlock` 搭配使用，會先移除包著 placeholder 的 `<text:p>`，讓 Python 端 builder 直接輸出自己的 `<text:p>` / `<text:list>` 兄弟節點。
 
-**類別**：`Listing`
+### 樣式注入流程
 
-解決 Jinja2 直接插入含換行符號的字串時，會被 XML escape 掉的問題。
+render 期間可能出現三類自動樣式：
 
-```python
-context = {"body": Listing("第一行\n第二行\t縮排\a新段落")}
-```
+- 文字樣式：`RichText` 呼叫 `tpl._register_text_style(...)`
+- 清單樣式：`NumberedListStyle` / `BulletListStyle` 呼叫 `tpl._register_list_style(...)`
+- 段落樣式：`StructuredBlock` 在使用 `margin_left` / `text_indent` 時呼叫 `tpl._register_para_style(...)`
 
-**特殊字元對應**：
+`render()` 在 `build_content_xml()` 之後，若 `_auto_styles`、`_list_styles`、`_para_styles` 任一非空，就會透過 `_inject_auto_styles()` 把這些 style XML 寫入 `<office:automatic-styles>`。
 
-| 字元 | 意義 | 展開為 |
-|------|------|--------|
-| `\n` | 軟換行（同段落） | `<text:line-break/>` |
-| `\t` | Tab | `<text:tab/>` |
-| `\a` | 新段落 | 結束並開啟 `<text:p>` |
-| `\f` | 分頁後新段落 | `<text:soft-page-break/>` + 新 `<text:p>` |
+這是這個專案一個很重要的實作特性：style registry 是 per-render state，不是持久狀態。
 
-**處理時機**：`Listing.__html__()` 只做 HTML escape（保留特殊字元），Jinja2 渲染完成後，`resolve_listing()` 再用 regex 展開。
+### `render()` 的重置行為
 
----
+每次 `render()` 開始都會清空：
 
-### 3.4 `inline_image.py` — 圖片嵌入
+- `_modified_files`
+- `_extra_images`
+- `_auto_styles`
+- `_list_styles`
+- `_para_styles`
+- `_subdoc_list`
+- `_subdoc_counter`
 
-**類別**：`InlineImage`
+這保證同一個 `OdtTemplate` 物件可以安全地多次渲染，而不會把前一次的 style、image 或 subdoc 狀態殘留到下一次。
 
-```python
-img = InlineImage(tpl, "photo.png", width=Cm(5))
-context = {"photo": img}
-```
+## `richtext.py`：文字與段落格式
 
-**內部機制**：
-- Jinja2 渲染時呼叫 `_build_xml()`，產生 `<draw:frame><draw:image .../></draw:frame>` XML。
-- 同時呼叫 `tpl._add_image(self)` 將圖片記錄到 `_extra_images`。
-- `save()` 時將圖片位元組寫入 ZIP 的 `Pictures/` 目錄。
-- `_update_manifest()` 在 `META-INF/manifest.xml` 新增對應紀錄。
-- 圖片以 MD5 hash 作為檔名，避免重複。
+### `RichText`
 
----
+`RichText` 用來建立行內內容。它不直接把格式寫成 ODF inline property，而是透過 `tpl._register_text_style(...)` 先註冊一個 named automatic style，再在輸出的 `<text:span>` 上引用這個 style name。
 
-### 3.5 `subdoc.py` — 子文件合併
+設計重點：
 
-**類別**：`OdtSubdoc`
+- fragment 先存在 `_fragments`
+- 真正的 style name 採 lazy registration，在 `_build()` 時才註冊
+- 這樣做是因為 `render()` 會先清掉 `_auto_styles`，如果太早註冊，render 開始時會被洗掉
 
-允許將另一個 `.odt` 檔案的內容嵌入主文件。
+### `RichTextParagraph`
 
-```python
-subdoc = tpl.new_subdoc("chapter1.odt")
-context = {"chapter": subdoc}
-```
+`RichTextParagraph` 直接產生完整 `<text:p>` XML，因此應搭配 `{{p var }}` 使用，而不是一般的 `{{ var }}`。
 
-**核心挑戰**：不同文件可能有相同名稱的自動樣式（如 `T1`、`P1`），直接合併會衝突。
+它本身不管理 paragraph automatic styles；如果需要指定段落樣式，使用 `parastyle=` 指向模板裡既有的 paragraph style name。
 
-**解決方案**：以唯一前綴重命名所有樣式與圖片。
+## `listing.py`：多行文字
 
-**處理流程**：
-1. `OdtSubdoc.__init__()` — 讀取並解析 `.odt` ZIP，提取 body XML、自動樣式、圖片。
-2. `_reset()` — 每次 `render()` 開始時清空上次的狀態，讓同一個 subdoc 可以多次使用。
-3. `_ensure_renamed()` — 首次呼叫時分配計數器（`odttpl_sd1_`、`odttpl_sd2_`...），用正則替換所有樣式名稱和圖片路徑。
-4. `_get_xml()` — 回傳已重命名的 body XML（供 Jinja2 渲染時插入）。
-5. 渲染完成後，`OdtTemplate` 收集所有 subdoc 的樣式，注入主文件的 `<office:automatic-styles>`。
+`Listing` 的責任很單純：先把一般文字安全 escape，再把控制字元在 render 後轉成 ODF 對應元素。
 
----
+對應關係：
 
-### 3.6 `structured_block.py` — 程式化段落＋巢狀清單 builder
+- `\n` -> `<text:line-break/>`
+- `\t` -> `<text:tab/>`
+- `\a` -> 新段落
+- `\f` -> `<text:soft-page-break/>` + 新段落
 
-**公開 API**：`StructuredBlock`（別名 `SB`）、`NumberedListStyle`（別名 `NLS`）、`BulletListStyle`、`LevelSpec`、`BulletLevelSpec`、`LabelFollowedBy`、`StructuredBlockError`。
+`Listing` 自己不直接修改 ZIP，也不涉及 style registry。
 
-**定位**：補足 `{%li %}` 迴圈難以表達的情境 — 文件結構（段落 / 清單層級 / 清單項目內的延伸段落）由 Python 端邏輯決定，而非靜態範本形狀。
+## `inline_image.py`：圖片嵌入
 
-**典型使用**：
+`InlineImage` 在 `__str__()` / `_build_xml()` 時做兩件事：
 
-```python
-block = StructuredBlock(tpl)
-block.add_paragraph("Findings:")
-block.add_list_item("Severity high", level=1)
-block.add_paragraph("Affected services: A, B", in_list_item=True)
-block.add_list_item("Auth service", level=2)
-context = {"content": block}
-```
+1. 透過 `tpl._add_image(...)` 把圖片內容註冊到 `_extra_images`
+2. 產生 `<draw:frame><draw:image .../></draw:frame>` XML
 
-範本中以 `{{block content}}` 佔位，`_TAG_MAP` 會剝除外層 `<text:p>` 後插入 block 的 XML。
+重要行為：
 
-**AST 節點**：
+- `image_descriptor` 可為檔案路徑、`Path` 或 file-like object
+- 若只給 `width` 或 `height`，會嘗試讀取圖片尺寸並按比例推算另一邊
+- `save()` 階段才真正把 `_extra_images` 寫入 ZIP 的 `Pictures/`
+- `_update_manifest()` 會同步更新 `META-INF/manifest.xml`
 
-| 節點 | 用途 |
-|------|------|
-| `ParagraphNode` | 一個獨立段落（或清單項目內的延伸段落） |
-| `ListItemNode` | 一個清單項目，攜帶 `continuation`（延伸段落）與 `nested`（子層 `_ListGroup`） |
-| `_ListGroup` | 內部：同層級、同樣式的連續 `ListItemNode` 群組 |
+## `subdoc.py`：子文件合併
 
-**Builder 狀態**：
-- `_nodes: list[ParagraphNode | _ListGroup]` — 最終頂層序列
-- `_list_stack: list[_ListGroup]` — 目前開啟的各層清單（index+1 = level）
-- `_current_item: ListItemNode | None` — 目前可接受 `in_list_item=True` 延伸段落的項目
-- `_referenced_styles: list[NumberedListStyle | BulletListStyle]` — 本 block 引用過的清單樣式
-- `_default_style_obj: NumberedListStyle | None` — 未指定樣式時 lazy 產出的預設 1./1.1./1.1.1. 樣式
+`OdtSubdoc` 代表一個可在 render 時插入主文件的 `.odt` body。
 
-**樣式登錄策略**：`_build()` 被呼叫時會遍歷 `_referenced_styles` 並呼叫 `tpl._register_list_style(...)` — 這是為了在每次 `render()` 清空 `_list_styles` 之後仍能重新註冊（RichText 的 lazy registration 同一思路）。`_render_paragraph` 若未給 `parastyle` 但有 `margin_left` / `text_indent`，會呼叫 `tpl._register_para_style(...)` 取得 `odttpl_P{n}`。
+典型流程：
 
-**渲染**：字串組裝而非 lxml（與 `RichText` 一致），最終由 `_check_well_formed` 一次驗證。每個頂層 `<text:list>` 會加上 `text:continue-numbering="false"`，避免 `_merge_consecutive_lists` 將不同 block 的清單誤合併而延續編號。
+1. `tpl.new_subdoc("chapter.odt")`
+2. `OdtSubdoc._load()` 讀取子文件的 body、automatic styles、圖片
+3. `render()` 時 `OdtSubdoc._reset()` 清空 per-render 狀態
+4. `__str__()` / `_get_xml()` 觸發 `_ensure_renamed()`
+5. automatic style names 改寫成 `odttpl_sd{n}_...`
+6. 圖片路徑改寫成新的 `Pictures/odttpl_sd...`
+7. `tpl._register_subdoc(self)` 將此 subdoc 加入本次 render 的合併清單
 
-**`NumberedListStyle` / `BulletListStyle`**：
-- 建構時就呼叫 `tpl._register_list_style(self)`（立即登錄、名稱可自帶或由 `tpl._next_list_style_name()` 產生）。
-- 各自以 `.xml` property 生成 `<text:list-style>…</text:list-style>`，前者用 `<text:list-level-style-number>`、後者用 `<text:list-level-style-bullet>`。
-- `LevelSpec.format` 支援 `"1"`、`"a"`、`"A"`、`"i"`、`"I"`、`"一"`、或 `""`，不做白名單驗證；其中 `"一"` 會輸出為 LibreOffice 相容的 `style:num-format="一, 二, 三, ..."`。
-- `LevelSpec` 的 numbered-list 縮排使用 LibreOffice label-alignment：`first_line_indent` → `fo:text-indent`、`indent_at` → `fo:margin-left`、`label_followed_by` → `text:label-followed-by`。`label_followed_by` 只接受 `LabelFollowedBy` enum；tab 模式會輸出 `text:list-tab-stop-position`（使用 `tab_stop_at`，未指定則使用 `indent_at`）。
-- `BulletListStyle.levels` 接受 `BulletLevelSpec` / `dict` / 純字串（單字元 bullet）三種寫法。
+目前合併範圍：
 
-**嚴格檢查**：`add_list_item` 對 `level<1`、跳級 (`level > 目前深度+1`) 皆拋 `StructuredBlockError`；`add_paragraph(in_list_item=True)` 於無開啟項目時同樣拋出。
+- 子文件 body XML
+- 子文件 automatic styles
+- 子文件內嵌圖片
 
-**與 `{%li %}` 共存**：兩者在 `patch_xml` 走不同分支（`block` 剝除整個 `<text:p>`、`li` 剝除整個 `<text:list-item>` 並保留 start-value restart marker），互不干擾；同一份範本可混用。
+目前不做完整 merge 的部分：
 
----
+- 子文件獨有的 named paragraph / character styles
 
-## 4. 核心資料流
+## `structured_block.py`：程式化段落與巢狀清單
 
-以下展示一次完整的 `render()` + `save()` 的執行路徑：
+### 對外 API
 
-```
-render(context)
-│
-├─ [重置階段]
-│   ├─ 清空 _modified_files, _auto_styles, _extra_images
-│   └─ 對 context 中所有 OdtSubdoc 呼叫 _reset()
-│
-├─ [建構 content.xml]
-│   ├─ 從 _template_data 取出原始 content.xml
-│   ├─ patch_xml() ──────────────────────────── 修補 XML（共 6 步）
-│   ├─ Jinja2 Template(xml).render(context)
-│   │   └─ 過程中呼叫各 context 物件的 __str__ / __html__：
-│   │       ├─ RichText → _build() → 登錄樣式 + 回傳 <text:span>
-│   │       ├─ Listing → escape 後回傳（含 \n 等特殊字元）
-│   │       ├─ InlineImage → _build_xml() → 登錄圖片 + 回傳 <draw:frame>
-│   │       └─ OdtSubdoc → _get_xml() → 回傳已重命名的 body XML
-│   ├─ resolve_listing() ──────────────────────── 展開 \n \t \a \f
-│   └─ _merge_consecutive_lists() ───────────── 修正迴圈後的 <text:list>
-│
-├─ [樣式注入]
-│   └─ _inject_auto_styles() ─────────────────── 將 RichText 樣式定義插入 XML
-│
-├─ [合併 subdoc 資源]
-│   └─ 對每個 OdtSubdoc：
-│       ├─ 將其自動樣式 XML 注入 content.xml
-│       └─ 將其圖片加入 _extra_images
-│
-├─ [建構 styles.xml]（流程同上，錯誤會被忽略）
-│
-└─ _update_manifest() ───────────────────────── 更新 manifest.xml
+主要類別與別名：
 
-save(output)
-│
-├─ 開啟原始 _template_data 為 ZIP 讀取
-├─ 建立新 ZIP 輸出
-├─ 複製所有原始檔案，跳過 _modified_files 中的
-├─ 寫入 _modified_files 中的修改檔案
-└─ 將 _extra_images 的圖片寫入 Pictures/
-```
+- `StructuredBlock` / `SB`
+- `NumberedListStyle` / `NLS`
+- `BulletListStyle`
+- `LevelSpec`
+- `BulletLevelSpec`
+- `LabelFollowedBy`
+- `StructuredBlockError`
 
----
+主要方法：
 
-## 5. 關鍵演算法
+- `add_paragraph(...)`
+- `add_list_item(...)`
+- `close_list()`
 
-### 5.1 `patch_xml()` — XML 修補
+### 內部資料模型
 
-**問題根源**：LibreOffice 在儲存含有 Jinja2 語法的文件時，會將標籤切碎。例如：
+AST 相關型別：
+
+- `ParagraphNode`
+- `ListItemNode`
+- `_ListGroup`
+- `_SuspendedListContext`
+
+`StructuredBlock` 內部的重要欄位：
+
+- `_nodes`：最上層輸出節點清單，內容是 `ParagraphNode` 或 `_ListGroup`
+- `_list_stack`：目前 live 的 list path；索引 `i` 對應 level `i + 1`
+- `_current_item`：目前可接受 continuation paragraph 的 list item
+- `_suspended_list_context`：當 list 被 standalone paragraph 切斷時保留下來的可續接 ancestry
+- `_referenced_styles`：此 block 用到的 list style objects，`_build()` 時會重新註冊
+- `_default_style_obj`：lazy 建立的預設 numbered list style
+
+### `add_paragraph()` 規則
+
+`add_paragraph(text, ..., in_list_item=False)`：
+
+- `in_list_item=True`：把段落加到目前 list item 的 `continuation`
+- `in_list_item=False`：先把目前 live list context suspend 起來，再建立 standalone paragraph
+
+錯誤情況：
+
+- 若 `in_list_item=True` 但目前沒有 open list item，拋 `StructuredBlockError`
+
+### `add_list_item()` 規則
+
+`add_list_item(text, ..., level=1, list_style=None, continue_numbering=None)`：
+
+- `level < 1` 直接拋錯
+- 若跳層，例如從 level 1 直接加 level 3，也會拋錯
+- `list_style` 可為：
+  - `None`
+  - 既有 template style name 字串
+  - `NumberedListStyle`
+  - `BulletListStyle`
+- 若 block 沒指定 `default_list_style`，第一次需要時會 lazy 建立一個五層的預設 numbered style
+
+### 清單續號與 restart 行為
+
+這是 `StructuredBlock` 近期最重要的行為。
+
+當清單被 standalone paragraph 切開時：
+
+1. `_suspend_list_context()` 會記住目前每一層使用的 style name
+2. 下一次 `add_list_item()` 若 target level 與 style 相容，就可透過 `_resume_suspended_context()` 重建 ancestry
+3. 若 `continue_numbering` 沒特別指定，預設採續號
+4. 若 `continue_numbering=False`，則在被恢復的那一層改為 restart
+5. 若 `continue_numbering=True` 但不存在相容的 suspended context，會拋 `StructuredBlockError`
+
+對 live list 也有 restart 規則：
+
+- 若同層清單 item 指定 `continue_numbering=False`
+- 或同層改用不同 `list_style`
+- 會新開一個 sibling `_ListGroup`
+
+輸出到 XML 時，每個 `_ListGroup` 會生成：
 
 ```xml
-<!-- 原本寫的 -->
-{{ name }}
-
-<!-- LibreOffice 儲存後變成 -->
-<text:span text:style-name="T1">{</text:span><text:span>{</text:span> name <text:span>}</text:span><text:span>}</text:span>
+<text:list text:style-name="..." text:continue-numbering="true|false">
 ```
 
-**六步修補流程**：
+### `close_list()`
 
-| 步驟 | 說明 |
-|------|------|
-| 1 | 移除緊鄰 `{{`、`{%`、`}}`、`%}` 的多餘標籤 |
-| 2 | 移除 Jinja2 區塊**內部**的 span 邊界標籤 |
-| 3 | 處理 `{%tr`、`{%tc`、`{%p`、`{%s`、`{%li` 等元素級 shorthand（`_TAG_MAP`），把整個 ODF 元素替換為純 Jinja tag |
-| 4 | 處理 `{%-`、`-%}` 空白修剪語法 |
-| 5 | 追蹤 span 巢狀深度，丟棄孤立的 `</text:span>` |
-| 6 | 反轉義標籤內的 HTML 實體（`&amp;` → `&` 等） |
+`close_list()` 會：
 
-**設計考量**：使用正則而非完整 XML 解析，速度較快，且能應對 LibreOffice 產生的非標準格式。
+- 清掉 `_list_stack`
+- 清掉 `_current_item`
+- 清掉 `_suspended_list_context`
 
----
+也就是說，它不只是關閉目前 live list，也會讓後續 `add_list_item(..., continue_numbering=True)` 失去可續接上下文。
 
-### 5.2 `_merge_consecutive_lists()` — 修正迴圈中的清單
+### 清單樣式物件
 
-**問題**：Jinja2 的 `{% for %}` 迴圈展開後，每次迭代各自包一個 `<text:list>`，導致自動編號重置：
+#### `NumberedListStyle`
 
-```xml
-<!-- 展開後 -->
-<text:list><text:list-item>1. 項目 A</text:list-item></text:list>
-<text:list><text:list-item>1. 項目 B</text:list-item></text:list>  ← 又從 1 開始
-```
+- `levels` 接受 `LevelSpec` 或 `dict`
+- 建構時就會向 `tpl._register_list_style(self)` 註冊
+- 若沒提供 `name`，會由 template 生成類似 `odttpl_L1` 的 style name
+- `xml` property 會輸出 `<text:list-style>...</text:list-style>`
 
-**解法**：狀態機式的 token 掃描，將相鄰且樣式相同的 `<text:list>` 合併。
+`LevelSpec` 重要欄位：
 
-```xml
-<!-- 合併後 -->
-<text:list>
-  <text:list-item>1. 項目 A</text:list-item>
-  <text:list-item>2. 項目 B</text:list-item>
-</text:list>
-```
+- `format`
+- `suffix`
+- `prefix`
+- `display_levels`
+- `first_line_indent`
+- `indent_at`
+- `label_followed_by`
+- `tab_stop_at`
+- `start_value`
 
-**注意**：只合併最外層的 list；巢狀 list 不受影響。
+`label_followed_by` 必須是 `LabelFollowedBy` enum 值；傳一般字串會在產生 XML 時拋 `StructuredBlockError`。
 
----
+特殊格式：
 
-### 5.3 自動樣式登錄（Registry Pattern）
+- 中文數字格式會被正規化成 LibreOffice 相容的 CJK 數字格式字串
 
-共有三種自動樣式 registry，統一由 `_inject_auto_styles` 插入 `<office:automatic-styles>`：
+#### `BulletListStyle`
 
-| Registry | 來源 | Key | 產生名稱 | 對應樣式 family |
-|----------|------|-----|-----------|-----------------|
-| `_auto_styles` | `RichText._build()` → `_register_text_style(**props)` | `frozenset(props)` | `odttpl_T{n}` | `text` |
-| `_para_styles` | `StructuredBlock._render_paragraph()` → `_register_para_style(**props)` | `frozenset(props)` | `odttpl_P{n}` | `paragraph` |
-| `_list_styles` | `NumberedListStyle` / `BulletListStyle.__init__` → `_register_list_style(style)` | `style.name`（即樣式名） | 建構時指定或 `odttpl_L{n}` | 獨立 `<text:list-style>` |
+- `levels` 接受：
+  - `BulletLevelSpec`
+  - `dict`
+  - 單純的 bullet 字元字串
+- 空 levels 會拋 `StructuredBlockError`
+- 和 `NumberedListStyle` 一樣，建立時就會註冊到 template
 
-相同屬性組合只產生一份樣式定義，節省檔案大小、避免命名爆炸。每次 `render()` 三個 registry 都會一併清空，下次渲染重新登錄（`RichText`、`StructuredBlock` 各自以 lazy re-register 邏輯處理跨 render 重用）。
+`BulletLevelSpec` 目前支援：
 
----
+- `bullet_char`
+- `space_before`
+- `min_label_width`
 
-### 5.4 `_check_well_formed()` — 渲染後的 XML 驗證
+### paragraph style registration
 
-**位置**：`build_content_xml` 與 `build_styles_xml` 的結尾。
+`StructuredBlock._render_paragraph()` 在遇到以下情況時會建立自動段落樣式：
 
-**作用**：以 `lxml.etree.fromstring()` 解析剛產出的 XML，若不是 well-formed 就拋出 `ValueError`，並在訊息中列出最常見原因（Jinja tag 跨越 ODF 元素邊界）與可用的 shorthand 對照（tr / tc / p / s / li）。
+- `parastyle` 未指定
+- 但有 `margin_left` 或 `text_indent`
 
-**實作概要**：
+此時會呼叫：
 
 ```python
-@staticmethod
-def _check_well_formed(xml: str, part_name: str) -> None:
-    try:
-        etree.fromstring(xml.encode("utf-8"))
-    except etree.XMLSyntaxError as exc:
-        raise ValueError(
-            f"Rendered {part_name} is not well-formed XML: {exc}. "
-            "A common cause is a Jinja2 tag (e.g. {% for %} / {% endfor %}) "
-            "that crosses an ODF element boundary. Use the element-level "
-            "shorthands: {%tr %}, {%tc %}, {%p %}, {%s %}, {%li %}."
-        ) from exc
+tpl._register_para_style(margin_left=..., text_indent=...)
 ```
 
-**典型觸發情境**：使用者把 `{% for appendix in appendixs %}` 放在「備考：」那段 `<text:p>` 裡，但 `{% endfor %}` 落在隨後 `<text:list><text:list-item><text:p>` 裡。Jinja 會將兩個 tag 之間的原文（含 `</text:p><text:list…><text:list-item><text:p>`）整段複製 N 次，每輪各自開啟一個新的 `<text:list>` 與 `<text:list-item>` 卻永不關閉，導致結構失衡。`_check_well_formed` 會在渲染階段即時阻斷並提示改用 `{%li` shorthand。
+如果同時給了 `parastyle`，就直接使用現有 style name，不再自動產生 paragraph style。
 
-**設計考量**：以失敗成本換取易讀的錯誤訊息 — 在回傳給 `save()` 之前就攔截問題，避免使用者事後在 LibreOffice 打開才看到「content.xml 在 x, y 處格式錯誤」。
+### `RichText` 與 block 的整合
 
----
+`add_paragraph()` 和 `add_list_item()` 的 `text` 都接受 `str` 或 `RichText`。
 
-## 6. 狀態管理
+在 block render 時：
 
-`OdtTemplate` 的多次 `render()` 能力倚賴嚴格的狀態重置：
+- `RichText` 會透過 `_render_inline()` 呼叫 `_build()`
+- `_build()` 內部再去註冊對應文字樣式
+- 這些樣式最後跟其他 registry 一起注入 `<office:automatic-styles>`
 
-```python
-def render(self, context, ...):
-    # 每次 render 開始時重置所有可變狀態
-    self._modified_files = {}
-    self._auto_styles = {}
-    self._list_styles = {}
-    self._para_styles = {}
-    self._extra_images = {}
-    self._subdoc_list = []
-    self._subdoc_counter = 1
-    # ...
+## 渲染資料流
+
+可把 `render()` 的高階流程理解成：
+
+```text
+load template bytes
+-> reset per-render state
+-> reset any OdtSubdoc found in context
+-> build content.xml
+   -> patch_xml()
+   -> Jinja render
+   -> resolve_listing()
+   -> _merge_consecutive_lists()
+   -> _check_well_formed()
+-> inject automatic styles if needed
+-> merge subdoc auto styles and images
+-> optionally build styles.xml
+-> update manifest for added images
+-> save()
 ```
 
-`_template_data`（原始 ZIP bytes）**永遠不被修改**，確保可以重複渲染。
+幾個值得特別記住的點：
 
-`OdtSubdoc` 也有自己的 `_reset()`，在每次渲染開始時清除前一次的樣式重命名狀態。
+- `RichText`、`StructuredBlock`、`InlineImage`、`OdtSubdoc` 都是靠 Jinja render 過程中的 `__str__()` / `__html__()` 參與輸出
+- 真正寫入 ZIP 的時機在 `save()`，不是在 `render()`
+- `save()` 會保留原 ZIP 內未變動的檔案，只替換 `_modified_files` 以及新增的 `Pictures/*`
 
----
+## XML 正確性與錯誤模型
 
-## 7. 測試架構
+render 之後 `content.xml` 會再跑 `_check_well_formed()`。如果 Jinja 標籤跨越了不合法的 ODF 邊界，就會收到描述性的 `ValueError`，訊息會提示改用 `{%tr %}`、`{%tc %}`、`{%p %}`、`{%s %}`、`{%li %}` 等 shorthand。
 
-### 測試環境建立
+這個檢查是保護專案穩定性的重要防線，因為很多錯誤若等到 LibreOffice 開啟文件時才爆出來，回溯起來會很痛苦。
 
-測試用的 `.odt` 範本由 `make_templates.py` 程式化產生，不需要 LibreOffice。
+## 測試基線
+
+本文件更新時，已驗證：
 
 ```bash
-cd tests
-python make_templates.py   # 產生 templates/*.odt
-pytest test_template.py
+uv run pytest tests/test_template.py tests/test_structured_block.py -q
 ```
 
-### 測試分類
+結果為 `61 passed`。
 
-| 測試 | 涵蓋功能 |
-|------|---------|
-| `test_simple_variable` | 基本變數替換 |
-| `test_variable_escaped` | autoescape 防 XML injection |
-| `test_loop_table` | `{%tr for ...` 表格列迴圈 |
-| `test_listing_*` | Listing 換行、Tab 展開 |
-| `test_richtext_*` | 粗體、顏色、具名樣式 |
-| `test_conditional_*` | `{%p if ...` 段落條件 |
-| `test_undeclared_variables` | 變數分析 API |
-| `test_save_to_file` | 儲存至路徑（非 BytesIO）|
-| `test_multi_render` | 同一個 template 物件多次渲染 |
-| `test_subdoc_*` | subdoc 插入、樣式合併、多次渲染 |
+### `tests/test_template.py`
 
-### 測試輔助模式
+目前覆蓋的主題：
 
-```python
-# 調試時可輸出 XML 觀察渲染結果
-tpl.render(context)
-print(tpl._modified_files.get("content.xml", b"").decode())
-```
+- 基本變數替換
+- `autoescape=True`
+- `{%tr` 表格列迴圈
+- `Listing` 的換行與 tab
+- `RichText` 的粗體、顏色、named style、跨段落切分
+- `{%p` 條件式
+- `get_undeclared_variables()`
+- `save()` 到檔案
+- 同一 template 多次 render
+- loop 展開後連續清單的續號邏輯
+- `OdtSubdoc` 的基本插入、auto style merge、style name collision 避免、多次 render 穩定性
+- `patch_xml()` 對 `&quot;`、`&apos;`、`&amp;`、`&#160;` 等 entity 的清理邏輯
 
----
+### `tests/test_structured_block.py`
 
-## 8. 擴充指引
+目前覆蓋的主題：
 
-### 新增一種 Context 物件類型
+- 純段落 block
+- 段落與清單交錯輸出
+- 三層巢狀 numbered list
+- list item 內 continuation paragraphs
+- block 中使用 `RichText`
+- level skip / invalid level / orphan continuation 的錯誤情況
+- 預設清單樣式自動註冊
+- 使用 template 既有具名清單樣式
+- `NumberedListStyle` 自訂 levels
+- LibreOffice label alignment 相關 XML
+- 自訂 tab stop
+- `LabelFollowedBy` 型別驗證
+- 中文數字格式輸出
+- block 與 `{%li %}` 同時存在
+- split paragraph 後的續號 / restart 行為
+- `close_list()` 對 suspended context 的清除
+- `margin_left` / `text_indent` 觸發 paragraph style registration
+- `BulletListStyle`
+- block 插入 table cell
 
-若要支援新的物件（例如超連結、表格等），需要實作以下介面：
+## 擴充建議
 
-```python
-class MyObject:
-    def __html__(self):
-        # autoescape=True 時使用
-        return markupsafe.Markup("<text:a ...>...</text:a>")
+如果要新增新能力，優先遵守這幾個原則：
 
-    def __str__(self):
-        # autoescape=False 時使用
-        return "<text:a ...>...</text:a>"
-```
-
-若需要在 `save()` 時寫入額外資源（如圖片），在 `__html__` / `__str__` 中呼叫 `tpl._add_image()` 或自行擴充 `OdtTemplate`。
-
-### 新增 patch_xml 步驟
-
-`patch_xml()` 使用序列 regex 替換，新增步驟時只需在對應位置加入：
-
-```python
-def patch_xml(self, xml: str) -> str:
-    # 現有步驟 1-6...
-
-    # 新增步驟 7：處理某種新的 LibreOffice 奇怪行為
-    xml = re.sub(r"<某個pattern>", r"替換內容", xml)
-
-    return xml
-```
-
-**建議**：每個步驟加上注解說明要解決的問題，並附上範例 XML before/after。
-
-### 支援新的 ODF 元素
-
-ODF 規格複雜，新增支援時建議：
-1. 在 LibreOffice 建立一個含目標格式的 `.odt` 檔
-2. 解壓 ZIP，觀察 `content.xml` 的 XML 結構
-3. 確認對應的 ODF XML 規格
-
----
-
-## 9. 已知限制與 Trade-offs
-
-| 限制 | 原因 | 可能的改善方向 |
-|------|------|---------------|
-| `patch_xml()` 用正則處理 XML | 效能優先，且 LibreOffice 輸出格式尚算固定 | 遇到新的 edge case 需新增 regex 步驟 |
-| 整個 ZIP 載入記憶體 | 支援多次渲染 | 超大文件（>100MB）不適用 |
-| Subdoc 中無法使用 Jinja2 | 合併時是直接插入 XML，不再渲染 | 若需要，需在 `_get_xml()` 前先渲染 subdoc |
-| 樣式需手動在 LibreOffice 中定義 | RichText 的「具名樣式」引用的是範本中已存在的樣式 | 可考慮允許程式化定義段落樣式 |
-| `styles.xml` 渲染錯誤會被靜默忽略 | 避免範本中 styles.xml 沒有 Jinja2 內容時拋出錯誤 | 若未來 styles.xml 變數化，需調整此行為 |
-
----
+- 盡量把 registry 設計維持為 per-render state
+- 讓新型別在 Jinja render 期間才做 lazy registration，避免被 `render()` 一開始的 reset 洗掉
+- 新增 shorthand 或 patch 規則時，務必用最小 XML 範例加測試覆蓋 before/after
+- 若新功能會產生 XML 結構，最終仍應讓 `_check_well_formed()` 作為最後防線
+- 若會影響 ZIP 內容，確認 `save()` 與 manifest 更新路徑是否完整
 
 ## 附錄：公開 API 速查
 
 ```python
-from odttpl import OdtTemplate, RichText, R, RichTextParagraph, RP, Listing, InlineImage
-
-tpl = OdtTemplate("template.odt")
-
-# 取得所有需要的變數名稱
-vars = tpl.get_undeclared_variables()
-
-# 渲染
-tpl.render({
-    "name": "世界",
-    "title": RichText("標題", bold=True, color="#0000FF"),
-    "body": Listing("第一行\n第二行"),
-    "photo": InlineImage(tpl, "img.png", width=Cm(5)),
-    "chapter": tpl.new_subdoc("chapter.odt"),
-    "items": [{"name": "A"}, {"name": "B"}],
-})
-
-# 儲存
-tpl.save("output.odt")
-
-# 或存至記憶體
-import io
-buf = io.BytesIO()
-tpl.save(buf)
+from odttpl import (
+    OdtTemplate,
+    RichText,
+    RichTextParagraph,
+    R,
+    RP,
+    Listing,
+    InlineImage,
+    OdtSubdoc,
+    StructuredBlock,
+    NumberedListStyle,
+    BulletListStyle,
+    LevelSpec,
+    BulletLevelSpec,
+    LabelFollowedBy,
+    StructuredBlockError,
+    SB,
+    NLS,
+)
 ```
 
----
+常用入口：
 
-*本指南對應版本：v0.1.0*
+```python
+tpl = OdtTemplate("template.odt")
+
+variables = tpl.get_undeclared_variables()
+subdoc = tpl.new_subdoc("chapter.odt")
+
+tpl.render(
+    {
+        "name": "Alice",
+        "title": RichText(tpl, "Important", bold=True),
+        "content": RichTextParagraph(tpl, "Body"),
+        "body": Listing("Line one\nLine two"),
+        "logo": InlineImage(tpl, "logo.png", width="3cm"),
+        "chapter": subdoc,
+        "block": StructuredBlock(tpl),
+    },
+    autoescape=True,
+)
+
+tpl.save("output.odt")
+```
