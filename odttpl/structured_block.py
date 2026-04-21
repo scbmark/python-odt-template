@@ -274,7 +274,7 @@ class ParagraphNode:
 
 @dataclass
 class ListItemNode:
-    text: Union[str, RichText]
+    text: Optional[Union[str, RichText]]
     level: int
     list_style: Optional[str] = None
     parastyle: Optional[str] = None
@@ -287,7 +287,15 @@ class _ListGroup:
     """Internal: one contiguous run of items at a given level/style."""
 
     style_name: str
+    continue_numbering: bool = False
     items: List[ListItemNode] = field(default_factory=list)
+
+
+@dataclass
+class _SuspendedListContext:
+    """Internal: resumable ancestry captured when a list is split."""
+
+    styles: List[str]
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +321,7 @@ class StructuredBlock:
         # _list_stack[i] is the open _ListGroup for level (i+1)
         self._list_stack: List[_ListGroup] = []
         self._current_item: Optional[ListItemNode] = None
+        self._suspended_list_context: Optional[_SuspendedListContext] = None
         # List-style instances referenced by this block; re-registered on
         # every _build() call so they survive OdtTemplate.render() resets.
         self._referenced_styles: List[Any] = []
@@ -352,7 +361,8 @@ class StructuredBlock:
                 )
             self._current_item.continuation.append(node)
         else:
-            self._close_list_context()
+            self._suspend_list_context()
+            self._reset_live_list_context()
             self._nodes.append(node)
         return self
 
@@ -363,19 +373,34 @@ class StructuredBlock:
         level: int = 1,
         list_style: Union[str, "NumberedListStyle", "BulletListStyle", None] = None,
         parastyle: Optional[str] = None,
+        continue_numbering: Optional[bool] = None,
     ) -> "StructuredBlock":
         """Append a list item at the given 1-based level."""
         if level < 1:
             raise StructuredBlockError(f"level must be >= 1, got {level}")
+
+        if isinstance(list_style, (NumberedListStyle, BulletListStyle)):
+            self._track_style(list_style)
+        style_name = self._resolve_style(list_style) or self._default_style_name()
+
+        if not self._list_stack:
+            resumed = self._resume_suspended_context(
+                target_level=level,
+                target_style_name=style_name,
+                continue_numbering=continue_numbering,
+            )
+            if not resumed and continue_numbering is True:
+                raise StructuredBlockError(
+                    "continue_numbering=True called without a compatible suspended list context"
+                )
+            if not resumed:
+                self._suspended_list_context = None
+
         if level > len(self._list_stack) + 1:
             raise StructuredBlockError(
                 f"level skip from {len(self._list_stack)} to {level}; "
                 "intermediate levels must be added first"
             )
-
-        if isinstance(list_style, (NumberedListStyle, BulletListStyle)):
-            self._track_style(list_style)
-        style_name = self._resolve_style(list_style) or self._default_style_name()
 
         item = ListItemNode(
             text=text,
@@ -386,45 +411,143 @@ class StructuredBlock:
 
         if level == len(self._list_stack) + 1:
             # Open a new deeper level
-            current_group = _ListGroup(style_name=style_name)
-            if level == 1:
-                self._nodes.append(current_group)
-            else:
-                # Nest inside current item
-                assert self._current_item is not None
-                self._current_item.nested.append(current_group)
-            self._list_stack.append(current_group)
+            current_group = self._open_group(
+                level=level,
+                style_name=style_name,
+            )
         else:
             # Close deeper levels
             del self._list_stack[level:]
             current_group = self._list_stack[level - 1]
-            # Style change at same level → start a new sibling group
-            if current_group.style_name != style_name:
-                new_group = _ListGroup(style_name=style_name)
-                if level == 1:
-                    self._nodes.append(new_group)
-                else:
-                    parent_item = self._list_stack[level - 2].items[-1]
-                    parent_item.nested.append(new_group)
-                self._list_stack[level - 1] = new_group
-                current_group = new_group
+            start_new_segment = (
+                current_group.style_name != style_name
+                or (
+                    continue_numbering is not None
+                    and len(current_group.items) > 0
+                )
+            )
+            if start_new_segment:
+                current_group = self._open_group(
+                    level=level,
+                    style_name=style_name,
+                    continue_numbering=continue_numbering or False,
+                    replace_current=True,
+                )
 
         current_group.items.append(item)
         self._current_item = item
+        self._suspended_list_context = None
         return self
 
     def close_list(self) -> "StructuredBlock":
         """Explicitly close any open list context."""
-        self._close_list_context()
+        self._close_list_context(clear_suspended=True)
         return self
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _close_list_context(self) -> None:
+    def _close_list_context(self, *, clear_suspended: bool = False) -> None:
+        self._reset_live_list_context()
+        if clear_suspended:
+            self._suspended_list_context = None
+
+    def _reset_live_list_context(self) -> None:
         self._list_stack.clear()
         self._current_item = None
+
+    def _suspend_list_context(self) -> None:
+        if self._list_stack:
+            self._suspended_list_context = _SuspendedListContext(
+                styles=[group.style_name for group in self._list_stack]
+            )
+
+    def _open_group(
+        self,
+        *,
+        level: int,
+        style_name: str,
+        continue_numbering: bool = False,
+        replace_current: bool = False,
+    ) -> _ListGroup:
+        group = _ListGroup(
+            style_name=style_name,
+            continue_numbering=continue_numbering,
+        )
+        if level == 1:
+            self._nodes.append(group)
+        else:
+            parent_item = self._list_stack[level - 2].items[-1]
+            parent_item.nested.append(group)
+        if replace_current:
+            self._list_stack[level - 1] = group
+        else:
+            self._list_stack.append(group)
+        return group
+
+    def _resume_suspended_context(
+        self,
+        *,
+        target_level: int,
+        target_style_name: str,
+        continue_numbering: Optional[bool],
+    ) -> bool:
+        context = self._suspended_list_context
+        if context is None:
+            return False
+        if not self._is_resume_compatible(
+            context=context,
+            target_level=target_level,
+            target_style_name=target_style_name,
+        ):
+            return False
+
+        resume_continue = continue_numbering is not False
+        top_style = target_style_name if target_level == 1 else context.styles[0]
+        current_group = _ListGroup(
+            style_name=top_style,
+            continue_numbering=resume_continue if target_level == 1 else True,
+        )
+        self._nodes.append(current_group)
+        self._list_stack = [current_group]
+        self._current_item = None
+
+        for level in range(1, target_level):
+            wrapper = ListItemNode(text=None, level=level)
+            current_group.items.append(wrapper)
+            self._current_item = wrapper
+
+            next_style = (
+                target_style_name
+                if level + 1 == target_level
+                else context.styles[level]
+            )
+            nested = _ListGroup(
+                style_name=next_style,
+                continue_numbering=(
+                    resume_continue if level + 1 == target_level else True
+                ),
+            )
+            wrapper.nested.append(nested)
+            current_group = nested
+            self._list_stack.append(current_group)
+
+        return True
+
+    @staticmethod
+    def _is_resume_compatible(
+        *,
+        context: "_SuspendedListContext",
+        target_level: int,
+        target_style_name: str,
+    ) -> bool:
+        depth = len(context.styles)
+        if target_level < 1 or target_level > depth + 1:
+            return False
+        if target_level <= depth:
+            return context.styles[target_level - 1] == target_style_name
+        return True
 
     def _resolve_style(
         self,
@@ -477,12 +600,13 @@ class StructuredBlock:
         return f"<text:p{style_attr}>{self._render_inline(node.text)}</text:p>"
 
     def _render_item(self, item: ListItemNode) -> str:
-        parts = [
-            "<text:list-item>",
-            self._render_paragraph(
-                ParagraphNode(text=item.text, parastyle=item.parastyle)
-            ),
-        ]
+        parts = ["<text:list-item>"]
+        if item.text is not None:
+            parts.append(
+                self._render_paragraph(
+                    ParagraphNode(text=item.text, parastyle=item.parastyle)
+                )
+            )
         for cont in item.continuation:
             parts.append(self._render_paragraph(cont))
         for nested in item.nested:
@@ -491,18 +615,21 @@ class StructuredBlock:
         return "".join(parts)
 
     def _render_group(self, group: _ListGroup, *, top_level: bool) -> str:
-        attrs = [f'text:style-name="{group.style_name}"']
-        if top_level:
-            # Defensive: prevent _merge_consecutive_lists from chaining numbering
-            # across unrelated blocks rendered in the same document.
-            attrs.append('text:continue-numbering="false"')
+        attrs = [
+            f'text:style-name="{group.style_name}"',
+            (
+                'text:continue-numbering="true"'
+                if group.continue_numbering
+                else 'text:continue-numbering="false"'
+            ),
+        ]
         attr_str = " ".join(attrs)
         body = "".join(self._render_item(it) for it in group.items)
         return f"<text:list {attr_str}>{body}</text:list>"
 
     def _build(self) -> str:
         # Close any open context before rendering so the snapshot is consistent.
-        self._close_list_context()
+        self._reset_live_list_context()
         # Re-register referenced list-styles in case OdtTemplate.render() reset
         # the registry between block construction and render time.
         for style in self._referenced_styles:

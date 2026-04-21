@@ -22,6 +22,11 @@ from odttpl import (
 )
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
+NS = {
+    "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
+    "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+    "style": "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +52,23 @@ def _body(xml: str) -> str:
     without the surrounding document chrome."""
     m = re.search(r"<office:text>(.*?)</office:text>", xml, flags=re.DOTALL)
     return m.group(1) if m else xml
+
+
+def _body_children(xml: str) -> list[etree._Element]:
+    root = etree.fromstring(xml.encode("utf-8"))
+    office_text = root.find(".//office:text", namespaces=NS)
+    assert office_text is not None
+    return [
+        child
+        for child in office_text
+        if etree.QName(child).localname != "sequence-decls"
+    ]
+
+
+def _block_children(xml: str) -> list[etree._Element]:
+    children = _body_children(xml)
+    assert len(children) >= 2
+    return children[1:-1]
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +517,210 @@ def test_list_then_unrelated_paragraph_closes_list():
 # ---------------------------------------------------------------------------
 # 17. Paragraph margin_left creates a paragraph style — Phase 3
 # ---------------------------------------------------------------------------
+
+
+def test_split_paragraph_resumes_nested_numbering_as_standalone_paragraph():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    block = StructuredBlock(tpl)
+    block.add_list_item("L1-a", level=1)
+    block.add_list_item("L2-a", level=2)
+    block.add_list_item("L2-b", level=2)
+    block.add_paragraph("split note", margin_left="1cm", text_indent="1cm")
+    block.add_list_item("L2-c", level=2)
+    block.add_list_item("L1-b", level=1)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    children = _block_children(xml)
+
+    assert [etree.QName(child).localname for child in children] == ["list", "p", "list"]
+    assert children[1].text == "split note"
+    assert children[1].get(f"{{{NS['text']}}}style-name") == "odttpl_P1"
+    assert children[2].get(f"{{{NS['text']}}}continue-numbering") == "true"
+
+    resumed_items = children[2].findall("text:list-item", namespaces=NS)
+    assert len(resumed_items) == 2
+    assert resumed_items[0].find("text:p", namespaces=NS) is None
+
+    resumed_nested = resumed_items[0].find("text:list", namespaces=NS)
+    assert resumed_nested is not None
+    assert resumed_nested.get(f"{{{NS['text']}}}continue-numbering") == "true"
+    assert [
+        node.findtext("text:p", namespaces=NS)
+        for node in resumed_nested.findall("text:list-item", namespaces=NS)
+    ] == ["L2-c"]
+    assert resumed_items[1].findtext("text:p", namespaces=NS) == "L1-b"
+
+    style_match = re.search(
+        r'<style:style\s+style:name="odttpl_P1"\s+style:family="paragraph"(.*?)</style:style>',
+        xml,
+        flags=re.DOTALL,
+    )
+    assert style_match is not None
+    assert "style:list-style-name" not in style_match.group(0)
+
+
+def test_split_paragraph_can_restart_numbering_without_resuming():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    block = StructuredBlock(tpl)
+    block.add_list_item("L1-a", level=1)
+    block.add_list_item("L2-a", level=2)
+    block.add_paragraph("split note")
+    block.add_list_item("L2-b", level=2, continue_numbering=False)
+    block.add_list_item("L1-b", level=1)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    children = _block_children(xml)
+
+    assert [etree.QName(child).localname for child in children] == ["list", "p", "list"]
+    assert children[2].get(f"{{{NS['text']}}}continue-numbering") == "true"
+    resumed_items = children[2].findall("text:list-item", namespaces=NS)
+    assert len(resumed_items) == 2
+    assert resumed_items[0].find("text:p", namespaces=NS) is None
+    resumed_nested = children[2].find("text:list-item/text:list", namespaces=NS)
+    assert resumed_nested is not None
+    assert resumed_nested.get(f"{{{NS['text']}}}continue-numbering") == "false"
+    assert resumed_nested.findtext("text:list-item/text:p", namespaces=NS) == "L2-b"
+    assert resumed_items[1].findtext("text:p", namespaces=NS) == "L1-b"
+
+
+def test_multiple_split_paragraphs_preserve_resumable_context():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    block = StructuredBlock(tpl)
+    block.add_list_item("L1-a", level=1)
+    block.add_list_item("L2-a", level=2)
+    block.add_paragraph("split one")
+    block.add_paragraph("split two")
+    block.add_list_item("L2-b", level=2)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    children = _block_children(xml)
+
+    assert [etree.QName(child).localname for child in children] == [
+        "list",
+        "p",
+        "p",
+        "list",
+    ]
+    assert [child.text for child in children[1:3]] == ["split one", "split two"]
+    assert children[3].get(f"{{{NS['text']}}}continue-numbering") == "true"
+    assert (
+        children[3]
+        .find("text:list-item/text:list", namespaces=NS)
+        .get(f"{{{NS['text']}}}continue-numbering")
+        == "true"
+    )
+
+
+def test_live_nested_restart_starts_new_sibling_segment():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    block = StructuredBlock(tpl)
+    block.add_list_item("L1-a", level=1)
+    block.add_list_item("L2-a", level=2)
+    block.add_list_item("L2-b", level=2)
+    block.add_list_item("L2-c", level=2, continue_numbering=False)
+    block.add_list_item("L2-d", level=2)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    children = _block_children(xml)
+
+    assert [etree.QName(child).localname for child in children] == ["list"]
+    top_items = children[0].findall("text:list-item", namespaces=NS)
+    assert len(top_items) == 1
+    nested_lists = top_items[0].findall("text:list", namespaces=NS)
+    assert len(nested_lists) == 2
+    assert [
+        [
+            node.findtext("text:p", namespaces=NS)
+            for node in nested.findall("text:list-item", namespaces=NS)
+        ]
+        for nested in nested_lists
+    ] == [["L2-a", "L2-b"], ["L2-c", "L2-d"]]
+    assert nested_lists[1].get(f"{{{NS['text']}}}continue-numbering") == "false"
+
+
+def test_live_top_level_restart_starts_new_top_level_segment():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    block = StructuredBlock(tpl)
+    block.add_list_item("L1-a", level=1)
+    block.add_list_item("L2-a", level=2)
+    block.add_list_item("L1-b", level=1, continue_numbering=False)
+    block.add_list_item("L1-c", level=1)
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    children = _block_children(xml)
+
+    assert [etree.QName(child).localname for child in children] == ["list", "list"]
+    assert children[0].get(f"{{{NS['text']}}}continue-numbering") == "false"
+    assert children[1].get(f"{{{NS['text']}}}continue-numbering") == "false"
+    assert [
+        node.findtext("text:p", namespaces=NS)
+        for node in children[1].findall("text:list-item", namespaces=NS)
+    ] == ["L1-b", "L1-c"]
+
+
+def test_close_list_clears_suspended_resumable_context():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    block = StructuredBlock(tpl)
+    block.add_list_item("L1-a", level=1)
+    block.add_list_item("L2-a", level=2)
+    block.add_paragraph("split note")
+    block.close_list()
+
+    with pytest.raises(StructuredBlockError):
+        block.add_list_item("L2-b", level=2)
+
+
+def test_continue_numbering_true_requires_suspended_context():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    block = StructuredBlock(tpl)
+
+    with pytest.raises(StructuredBlockError, match="continue_numbering=True"):
+        block.add_list_item("L1-a", level=1, continue_numbering=True)
+
+
+def test_in_list_item_continuation_para_style_has_no_list_style_name():
+    tpl = OdtTemplate(os.path.join(TEMPLATES, "structured_block.odt"))
+    block = StructuredBlock(tpl)
+    block.add_list_item("main", level=1)
+    block.add_paragraph(
+        "continuation",
+        in_list_item=True,
+        margin_left="1cm",
+        text_indent="1cm",
+    )
+    tpl.render({"content": block})
+    buf = io.BytesIO()
+    tpl.save(buf)
+    xml = _content_xml(buf.getvalue())
+    body = _body(xml)
+
+    m = re.search(
+        r"<text:list-item>(.*?)</text:list-item>",
+        body,
+        flags=re.DOTALL,
+    )
+    assert m is not None
+    item_xml = m.group(1)
+    assert item_xml.count("<text:p") == 2
+    assert "continuation" in item_xml
+
+    style_match = re.search(
+        r'<style:style\s+style:name="odttpl_P1"\s+style:family="paragraph"(.*?)</style:style>',
+        xml,
+        flags=re.DOTALL,
+    )
+    assert style_match is not None
+    assert "style:list-style-name" not in style_match.group(0)
 
 
 def test_paragraph_margin_left_creates_para_style():

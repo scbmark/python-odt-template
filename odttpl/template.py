@@ -590,6 +590,7 @@ class OdtTemplate:
         """
         _LIST_OPEN = re.compile(r"<text:list\b(?:\s[^>]*)?>", re.DOTALL)
         _STYLE = re.compile(r'\btext:style-name="([^"]*)"')
+        _HAS_CONTINUE = re.compile(r'\btext:continue-numbering=')
 
         # Tokenise on list open/close tags only.
         tokens = re.split(r"(<text:list\b(?:\s[^>]*)?>|</text:list>)", xml)
@@ -597,46 +598,57 @@ class OdtTemplate:
         result: list[str] = []
         depth = 0
         style_stack: list[str] = []
+        mergeable_stack: list[bool] = []
         # Style name of the most-recently-closed outer list (buffered close tag).
         pending_close_style: Optional[str] = None
+        pending_close_mergeable = False
 
         for token in tokens:
             if _LIST_OPEN.fullmatch(token):
                 sm = _STYLE.search(token)
                 style = sm.group(1) if sm else ""
+                mergeable = not bool(_HAS_CONTINUE.search(token))
 
                 if (
                     pending_close_style is not None
                     and depth == 0
                     and style == pending_close_style
+                    and pending_close_mergeable
+                    and mergeable
                 ):
                     # Adjacent same-style list at the outer level → merge:
                     # drop both the buffered </text:list> and this opening tag.
                     pending_close_style = None
+                    pending_close_mergeable = False
                 else:
                     if pending_close_style is not None:
                         # Different style or different depth — flush the buffered close.
                         result.append("</text:list>")
                         pending_close_style = None
+                        pending_close_mergeable = False
                     result.append(token)
 
                 style_stack.append(style)
+                mergeable_stack.append(mergeable)
                 depth += 1
 
             elif token == "</text:list>":
                 depth -= 1
                 closed_style = style_stack.pop() if style_stack else ""
+                closed_mergeable = mergeable_stack.pop() if mergeable_stack else False
 
                 if depth == 0:
                     # Buffer so we can peek at the next sibling list.
                     if pending_close_style is not None:
                         result.append("</text:list>")
                     pending_close_style = closed_style
+                    pending_close_mergeable = closed_mergeable
                 else:
                     # Inner close tag — emit immediately.
                     if pending_close_style is not None:
                         result.append("</text:list>")
                         pending_close_style = None
+                        pending_close_mergeable = False
                     result.append(token)
 
             else:
@@ -645,6 +657,7 @@ class OdtTemplate:
                     # Real content between lists — flush the buffered close.
                     result.append("</text:list>")
                     pending_close_style = None
+                    pending_close_mergeable = False
                 result.append(token)
 
         if pending_close_style is not None:
